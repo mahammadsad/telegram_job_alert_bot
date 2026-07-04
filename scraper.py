@@ -9,7 +9,6 @@ import os
 import sqlite3
 import time
 from urllib.parse import urljoin, urlparse
-from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
@@ -43,7 +42,9 @@ HEADERS = {
 DB_FILE = "jobs.db"
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-GEMINI_RATE_LIMIT_DELAY = 6 
+
+# INCREASED DELAY to prevent 429 Rate Limiting from Gemini Free Tier
+GEMINI_RATE_LIMIT_DELAY = 10 
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,7 +86,7 @@ def mark_job_seen(conn: sqlite3.Connection, url: str, title: str, source: str) -
 
 
 # --------------------------------------------------------------------------
-# Gemini AI layer (Strict HTML Template)
+# Gemini AI layer (Strict HTML Template with Robust Error Handling)
 # --------------------------------------------------------------------------
 
 def build_gemini_prompt(title: str, content: str) -> str:
@@ -126,18 +127,35 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800},
     }
 
-    for attempt in range(1, 3):
+    # Increased to 3 attempts for better resilience
+    for attempt in range(1, 4):
         try:
             resp = requests.post(f"{GEMINI_ENDPOINT}?key={api_key}", json=payload, timeout=30)
+            
+            # 1. Handle Rate Limits explicitly
             if resp.status_code == 429:
-                time.sleep(15)
+                logger.warning(f"Attempt {attempt}: Gemini rate-limited (429). Sleeping 20s...")
+                time.sleep(20)
                 continue
-            resp.raise_for_status()
+                
+            # 2. Handle standard HTTP errors
+            if resp.status_code != 200:
+                logger.error(f"Gemini API Error {resp.status_code}: {resp.text}")
+                resp.raise_for_status()
+
             data = resp.json()
+            
+            # 3. Handle Safety Blocks (Google refuses to summarize certain words)
+            if "candidates" in data and not data["candidates"][0].get("content"):
+                logger.error(f"Gemini blocked this content due to safety filters: {data}")
+                return None
+
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except (requests.exceptions.RequestException, KeyError, IndexError) as e:
-            logger.error(f"Gemini API error: {e}")
+            
+        except (requests.exceptions.RequestException, KeyError, IndexError, ValueError) as e:
+            logger.error(f"Gemini API parsing error on attempt {attempt}: {e}")
             time.sleep(5)
+            
     return None
 
 
@@ -156,7 +174,7 @@ def send_to_telegram(message: str) -> bool:
     payload = {
         "chat_id": channel_id,
         "text": message,
-        "parse_mode": "HTML", # Changed to HTML to safely format the bold text
+        "parse_mode": "HTML", # HTML for safe formatting
         "disable_web_page_preview": True, 
     }
 
