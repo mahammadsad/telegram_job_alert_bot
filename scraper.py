@@ -3,29 +3,36 @@
 WB Government Job Scraper -> Gemini (Bengali summary) -> Telegram Broadcaster
 ==============================================================================
 
-Scrapes public West Bengal government job portals for new recruitment
-notices, summarizes each one in Bengali using the Gemini API free tier,
-and posts the result to a Telegram channel. Designed to run on a schedule
-inside GitHub Actions with no external server.
+Scrapes a West Bengal government job aggregator for new recruitment posts,
+summarizes each one in Bengali using the Gemini API free tier, and posts
+the result to a Telegram channel. Designed to run on a schedule inside
+GitHub Actions with no external server.
 
 Required environment variables (set as GitHub Secrets):
     TELEGRAM_BOT_TOKEN   - Bot token from @BotFather
     TELEGRAM_CHANNEL_ID  - e.g. "@your_channel" or a numeric chat id
     GEMINI_API_KEY       - API key from Google AI Studio (free tier)
 
-Notes on target sites (checked at the time this script was written):
-    - psc.wb.gov.in publishes a robots.txt that disallows automated
-      crawling. This script checks robots.txt before scraping any site
-      and will SKIP a site if it disallows access, logging a warning.
-      That means WBPSC will be skipped by default unless its robots.txt
-      changes. This is intentional -- please don't remove that check
-      without reading the site's current robots.txt yourself first.
-    - prb.wb.gov.in returned very little static HTML on a plain GET in
-      testing; its notice list may be loaded dynamically. If it never
-      yields results, inspect the live page source (view-source / dev
-      tools) and adjust the parsing logic below.
-    - mscwb.org is static HTML with descriptive link text and works well
-      with the simple keyword-matching approach used here.
+Why an aggregator instead of psc.wb.gov.in / prb.wb.gov.in / mscwb.org
+directly: those three official portals turned out to be unreliable from
+GitHub Actions runners in testing -- psc.wb.gov.in's robots.txt disallows
+bots, prb.wb.gov.in and mscwb.org have broken/legacy TLS configs or block
+cloud-provider IP ranges outright. westbengalcareers.com is a WordPress-
+based aggregator that republishes the same official notices (WBPSC,
+WBPRB, WBMSC, and other WB government bodies) in consistent, crawlable
+HTML, and its data was current (same-week postings) when this was tested.
+
+Parsing strategy: on this site's category archive page, every real job
+post title is rendered as an `<h2>` tag wrapping a single `<a>` link
+(standard WordPress post-loop markup). Site navigation, the sidebar, and
+footer links are NOT wrapped in `<h2>`, so restricting extraction to
+`<h2><a>` pairs naturally filters out nav/social/footer noise without
+needing an aggressive keyword blocklist. A short keyword allowlist is
+still applied as a secondary safety net.
+
+If you add more sources later: different job sites use different themes
+and layouts, so each new site will likely need its own small extraction
+function rather than assuming this same `<h2><a>` pattern applies.
 """
 
 import logging
@@ -37,44 +44,26 @@ from urllib.robotparser import RobotFileParser
 
 import requests
 from bs4 import BeautifulSoup
-from requests.adapters import HTTPAdapter
-from urllib3.util.ssl_ import create_urllib3_context
-
-
-class LegacyTLSAdapter(HTTPAdapter):
-    """
-    Some Indian government servers run old/misconfigured TLS stacks that
-    refuse the "safe" renegotiation modern OpenSSL insists on by default.
-    This adapter opts into legacy renegotiation support -- it still does
-    FULL certificate verification, it just relaxes one negotiation rule
-    so we can complete a handshake with these specific servers.
-    """
-    def init_poolmanager(self, *args, **kwargs):
-        ctx = create_urllib3_context()
-        ctx.options |= 0x4  # SSL_OP_LEGACY_SERVER_CONNECT
-        kwargs["ssl_context"] = ctx
-        return super().init_poolmanager(*args, **kwargs)
 
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
 
 TARGET_SITES = [
-    {"name": "WBPSC", "url": "https://psc.wb.gov.in/"},
-    {"name": "WBPRB", "url": "https://prb.wb.gov.in/"},
-    {"name": "WBMSC", "url": "https://www.mscwb.org/"},
+    {"name": "WestBengalCareers", "url": "https://www.westbengalcareers.com/wb-govt-jobs/"},
 ]
 
-# Keywords checked against combined (link text + href), case-insensitive.
-# Extend this list if a site uses other recurring words (e.g. "walk-in", "exam").
-KEYWORDS = ["recruitment", "vacancy", "advertisement", "notice", "pdf"]
+# Secondary safety net only -- primary filtering is structural (see scrape_site).
+# A post title must contain at least one of these to be broadcast.
+KEYWORDS = ["recruitment", "vacancy", "apply", "post"]
 
-# Link text that is almost always site-navigation, not a job posting.
+# Belt-and-braces: skip anything matching these even if it slipped through
+# the structural <h2><a> filter (e.g. a theme quirk wraps a nav item in h2).
 JUNK_TEXT = {
     "home", "contact us", "contact", "about us", "sitemap",
     "privacy policy", "terms of use", "terms & conditions",
-    "view more", "read more", "click here", "back", "next",
-    "previous", "login", "sign in", "faq",
+    "disclaimer", "older posts", "newer posts", "next", "previous",
+    "read more", "leave a comment",
 }
 
 HEADERS = {
@@ -266,24 +255,30 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
         return 0
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    anchors = soup.find_all("a", href=True)
-    logger.info(f"[{site_name}] Scanned {len(anchors)} links on {url}")
+
+    # Structural extraction: each real post title on this site's category
+    # archive page is an <h2> wrapping a single <a>. Section headings that
+    # aren't posts (e.g. "Post Wise Recruitment in West Bengal") are plain
+    # <h2> tags with no link, so they're skipped automatically.
+    headings = soup.find_all("h2")
+    logger.info(f"[{site_name}] Scanned {len(headings)} <h2> headings on {url}")
 
     seen_this_run = set()
     new_jobs_sent = 0
 
-    for a in anchors:
+    for h2 in headings:
+        a = h2.find("a", href=True)
+        if a is None:
+            continue
+
         text = a.get_text(strip=True)
         href = a["href"].strip()
 
         if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
             continue
-
-        combined = f"{text} {href}".lower()
-        if not any(kw in combined for kw in KEYWORDS):
+        if not text or text.lower() in JUNK_TEXT or len(text) < 6:
             continue
-
-        if text.lower() in JUNK_TEXT or len(text) < 4:
+        if not any(kw in text.lower() for kw in KEYWORDS):
             continue
 
         full_url = urljoin(url, href)
@@ -294,7 +289,7 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
         if is_job_seen(conn, full_url):
             continue
 
-        job_title = text if text else f"{site_name} notification"
+        job_title = text
         logger.info(f"[{site_name}] New job found: {job_title[:80]}")
 
         bengali_message = generate_bengali_summary(job_title, site_name)
@@ -329,7 +324,6 @@ def main() -> None:
     conn = init_db()
     session = requests.Session()
     session.headers.update(HEADERS)
-    session.mount("https://", LegacyTLSAdapter())
 
     total_new = 0
     try:
