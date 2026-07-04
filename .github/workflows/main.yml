@@ -1,0 +1,54 @@
+name: WB Govt Job Scraper
+
+on:
+  schedule:
+    # Every 2 hours, 02:00-14:00 UTC == 7:30 AM-7:30 PM IST
+    - cron: "0 2-14/2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Prevents overlapping runs (e.g. a manual trigger firing while a
+# scheduled run is still in progress) from racing on jobs.db.
+concurrency:
+  group: wb-job-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape-and-broadcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scraper.py
+
+      - name: Commit and push updated database (only if changed)
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add jobs.db
+          if git diff --staged --quiet; then
+            echo "No new jobs found this run. Nothing to commit."
+          else
+            git commit -m "chore: update job database with new listings [skip ci]"
+            git push
+          fi
