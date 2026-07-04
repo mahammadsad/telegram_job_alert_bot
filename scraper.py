@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WB Government Job Scraper -> Gemini (Strict HTML Template) -> Telegram
+WB Government Job Scraper (RSS) -> Gemini (Strict HTML Template) -> Telegram
 ==============================================================================
 """
 
@@ -8,7 +8,6 @@ import logging
 import os
 import sqlite3
 import time
-from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -17,25 +16,19 @@ from bs4 import BeautifulSoup
 # Configuration
 # --------------------------------------------------------------------------
 
+# Switched to RSS feed for reliability and speed
 TARGET_SITES = [
-    {"name": "WestBengalCareers", "url": "https://www.westbengalcareers.com/wb-govt-jobs/"},
+    {"name": "Karmasandhan", "url": "https://www.karmasandhan.com/feed/"},
 ]
 
 KEYWORDS = ["recruitment", "vacancy", "apply", "post"]
-
-JUNK_TEXT = {
-    "home", "contact us", "contact", "about us", "sitemap",
-    "privacy policy", "terms of use", "terms & conditions",
-    "disclaimer", "older posts", "newer posts", "next", "previous",
-    "read more", "leave a comment",
-}
 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "application/rss+xml, application/xml, text/xml",
     "Accept-Language": "en-US,en;q=0.9,bn;q=0.8",
 }
 
@@ -43,7 +36,7 @@ DB_FILE = "jobs.db"
 GEMINI_MODEL = "gemini-2.5-flash"
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
-# INCREASED DELAY to prevent 429 Rate Limiting from Gemini Free Tier
+# Generous delay to protect the Gemini Free Tier limit
 GEMINI_RATE_LIMIT_DELAY = 10 
 
 logging.basicConfig(
@@ -54,7 +47,7 @@ logger = logging.getLogger("wb_job_scraper")
 
 
 # --------------------------------------------------------------------------
-# Database / deduplication layer
+# Database / Deduplication Layer
 # --------------------------------------------------------------------------
 
 def init_db() -> sqlite3.Connection:
@@ -86,7 +79,7 @@ def mark_job_seen(conn: sqlite3.Connection, url: str, title: str, source: str) -
 
 
 # --------------------------------------------------------------------------
-# Gemini AI layer (Strict HTML Template with Robust Error Handling)
+# Gemini AI Layer (Strict HTML Template + Circuit Breaker)
 # --------------------------------------------------------------------------
 
 def build_gemini_prompt(title: str, content: str) -> str:
@@ -127,25 +120,22 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800},
     }
 
-    # Increased to 3 attempts for better resilience
+    resp = None
     for attempt in range(1, 4):
         try:
             resp = requests.post(f"{GEMINI_ENDPOINT}?key={api_key}", json=payload, timeout=30)
             
-            # 1. Handle Rate Limits explicitly
             if resp.status_code == 429:
                 logger.warning(f"Attempt {attempt}: Gemini rate-limited (429). Sleeping 20s...")
                 time.sleep(20)
                 continue
                 
-            # 2. Handle standard HTTP errors
             if resp.status_code != 200:
                 logger.error(f"Gemini API Error {resp.status_code}: {resp.text}")
                 resp.raise_for_status()
 
             data = resp.json()
             
-            # 3. Handle Safety Blocks (Google refuses to summarize certain words)
             if "candidates" in data and not data["candidates"][0].get("content"):
                 logger.error(f"Gemini blocked this content due to safety filters: {data}")
                 return None
@@ -156,11 +146,15 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
             logger.error(f"Gemini API parsing error on attempt {attempt}: {e}")
             time.sleep(5)
             
+    # Circuit Breaker Signal
+    if resp is not None and resp.status_code == 429:
+        return "RATE_LIMIT_EXHAUSTED"
+        
     return None
 
 
 # --------------------------------------------------------------------------
-# Telegram broadcast layer
+# Telegram Broadcast Layer
 # --------------------------------------------------------------------------
 
 def send_to_telegram(message: str) -> bool:
@@ -174,7 +168,7 @@ def send_to_telegram(message: str) -> bool:
     payload = {
         "chat_id": channel_id,
         "text": message,
-        "parse_mode": "HTML", # HTML for safe formatting
+        "parse_mode": "HTML",
         "disable_web_page_preview": True, 
     }
 
@@ -188,7 +182,7 @@ def send_to_telegram(message: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Scraping layer
+# Scraping Layer (RSS XML Parser)
 # --------------------------------------------------------------------------
 
 def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlite3.Connection) -> int:
@@ -199,63 +193,53 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
         logger.error(f"Failed to fetch {url}: {e}")
         return 0
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    headings = soup.find_all("h2")
+    # Parse as XML
+    soup = BeautifulSoup(resp.content, "xml")
+    items = soup.find_all("item")
+    logger.info(f"[{site_name}] Scanned {len(items)} items in RSS feed.")
+
     seen_this_run = set()
     new_jobs_sent = 0
 
-    for h2 in headings:
-        a = h2.find("a", href=True)
-        if a is None:
+    for item in items:
+        title_tag = item.find("title")
+        link_tag = item.find("link")
+        # Handle variations in RSS feed tags for the main content
+        content_tag = item.find("content:encoded") or item.find("description")
+        
+        if not title_tag or not link_tag:
             continue
 
-        text = a.get_text(strip=True)
-        href = a["href"].strip()
+        text = title_tag.text.strip()
+        full_url = link_tag.text.strip()
+        
+        # Strip HTML tags out of the description payload
+        article_text = ""
+        if content_tag:
+            article_text = BeautifulSoup(content_tag.text, "html.parser").get_text(separator="\n", strip=True)[:4000]
 
-        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
-            continue
-        if not text or text.lower() in JUNK_TEXT or len(text) < 6:
-            continue
         if not any(kw in text.lower() for kw in KEYWORDS):
             continue
 
-        full_url = urljoin(url, href)
-        if full_url in seen_this_run:
+        if full_url in seen_this_run or is_job_seen(conn, full_url):
             continue
+            
         seen_this_run.add(full_url)
-
-        if is_job_seen(conn, full_url):
-            continue
-
-        logger.info(f"[{site_name}] Fetching inner content for: {text[:80]}")
-        
-        try:
-            article_resp = session.get(full_url, timeout=20)
-            article_resp.raise_for_status()
-            article_soup = BeautifulSoup(article_resp.text, "html.parser")
-            
-            # Extracting text from the main body
-            content_div = article_soup.find(class_="entry-content")
-            if content_div:
-                article_text = content_div.get_text(separator="\n", strip=True)
-            else:
-                paragraphs = article_soup.find_all("p")
-                article_text = "\n".join([p.get_text(strip=True) for p in paragraphs])
-                
-            article_text = article_text[:4000]
-            
-        except Exception as e:
-            logger.error(f"Failed to extract inner content for {full_url}: {e}")
-            continue
+        logger.info(f"[{site_name}] Processing: {text[:80]}")
 
         bengali_message = generate_bengali_summary(text, article_text)
         time.sleep(GEMINI_RATE_LIMIT_DELAY)
+
+        # Catch the circuit breaker signal
+        if bengali_message == "RATE_LIMIT_EXHAUSTED":
+            logger.error("API quota exhausted. Halting the scraper to save GitHub Actions minutes.")
+            return new_jobs_sent
 
         if not bengali_message:
             logger.warning(f"Gemini failed for '{text[:50]}'; will retry next run.")
             continue
 
-        # Post strictly to Telegram
+        # Post to Telegram
         if send_to_telegram(bengali_message):
             mark_job_seen(conn, full_url, text, site_name)
             new_jobs_sent += 1
