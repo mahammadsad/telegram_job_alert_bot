@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WB Government Job Scraper -> Gemini (Comprehensive Bengali Summary) -> Telegram
+WB Government Job Scraper -> Gemini (Strict HTML Template) -> Telegram
 ==============================================================================
 """
 
@@ -85,7 +85,7 @@ def mark_job_seen(conn: sqlite3.Connection, url: str, title: str, source: str) -
 
 
 # --------------------------------------------------------------------------
-# Gemini AI layer (Comprehensive Summary)
+# Gemini AI layer (Strict HTML Template)
 # --------------------------------------------------------------------------
 
 def build_gemini_prompt(title: str, content: str) -> str:
@@ -95,20 +95,24 @@ Read the following job notification details carefully:
 TITLE: {title}
 DETAILS: {content}
 
-Write a highly detailed, comprehensive summary of this job strictly in natural, fluent Bengali. 
-Extract and include crucial details such as:
-- Name of the Department/Organization
-- Name of the Post(s)
-- Total Vacancies
-- Educational Qualifications / Eligibility
-- Age Limit
-- Salary / Pay Scale
-- Application Deadline and Important Dates
-- How to apply (Online/Offline)
+You MUST extract the data and fill out the EXACT HTML template below in fluent Bengali. 
+Do NOT write paragraphs. Do NOT use Markdown asterisks (**). Use ONLY the <b> tags provided in the template.
+If a specific detail is not found in the DETAILS text, write "বিজ্ঞপ্তি দেখুন" (See notification).
 
-Format the text nicely using emojis as bullet points. 
-DO NOT use Markdown like asterisks (*) or underscores (_) because it breaks the messaging app. Use standard plain text formatting with line breaks. 
-DO NOT include any links, URLs, or mention the source website."""
+COPY THIS TEMPLATE EXACTLY AND FILL IN THE BRACKETS:
+
+🚨 <b>নতুন সরকারি চাকরির আপডেট!</b> 🚨
+
+🏢 <b>বিভাগ:</b> [Insert Department Name]
+💼 <b>পদের নাম:</b> [Insert Post Name(s)]
+📊 <b>মোট শূন্যপদ:</b> [Insert Total Vacancies]
+🎓 <b>শিক্ষাগত যোগ্যতা:</b> [Insert Educational Qualifications]
+⏳ <b>বয়সসীমা:</b> [Insert Age Limit]
+💰 <b>বেতন:</b> [Insert Salary/Pay Scale]
+📅 <b>আবেদনের শেষ তারিখ:</b> [Insert Application Deadline]
+📝 <b>আবেদন পদ্ধতি:</b> [Insert How to Apply (Online/Offline)]
+
+Output ONLY the filled HTML template."""
 
 
 def generate_bengali_summary(title: str, content: str) -> str | None:
@@ -119,7 +123,7 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
 
     payload = {
         "contents": [{"parts": [{"text": build_gemini_prompt(title, content)}]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 800},
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 800},
     }
 
     for attempt in range(1, 3):
@@ -152,7 +156,7 @@ def send_to_telegram(message: str) -> bool:
     payload = {
         "chat_id": channel_id,
         "text": message,
-        # Removed parse_mode completely to prevent any formatting crashes
+        "parse_mode": "HTML", # Changed to HTML to safely format the bold text
         "disable_web_page_preview": True, 
     }
 
@@ -207,13 +211,12 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
 
         logger.info(f"[{site_name}] Fetching inner content for: {text[:80]}")
         
-        # --- NEW: Fetching the inner article content for Gemini ---
         try:
             article_resp = session.get(full_url, timeout=20)
             article_resp.raise_for_status()
             article_soup = BeautifulSoup(article_resp.text, "html.parser")
             
-            # Try to grab the main entry content, fallback to all paragraphs
+            # Extracting text from the main body
             content_div = article_soup.find(class_="entry-content")
             if content_div:
                 article_text = content_div.get_text(separator="\n", strip=True)
@@ -221,7 +224,6 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
                 paragraphs = article_soup.find_all("p")
                 article_text = "\n".join([p.get_text(strip=True) for p in paragraphs])
                 
-            # Limit characters to avoid breaking Gemini's API limits
             article_text = article_text[:4000]
             
         except Exception as e:
@@ -235,7 +237,7 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
             logger.warning(f"Gemini failed for '{text[:50]}'; will retry next run.")
             continue
 
-        # Sending ONLY the summary. No links attached.
+        # Post strictly to Telegram
         if send_to_telegram(bengali_message):
             mark_job_seen(conn, full_url, text, site_name)
             new_jobs_sent += 1
