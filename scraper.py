@@ -13,6 +13,9 @@ FIXES applied vs. the original draft (search "# FIX:" for each spot):
   4. Gemini model names are env-overridable (Google renames/retires these often).
   5. Global quota short-circuit across multiple feeds.
   6. Per-item try/except so one bad item can't crash the whole run.
+  7. Exponential backoff on 429s (text + image) and a per-run item cap
+     (MAX_JOBS_PER_RUN) so a feed backlog can't exhaust the whole quota
+     in a single run. All tunable via env vars -- see .env.example.
 """
 
 import base64
@@ -59,7 +62,20 @@ GEMINI_IMAGE_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-imag
 GEMINI_TEXT_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TEXT_MODEL}:generateContent"
 GEMINI_IMAGE_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_IMAGE_MODEL}:generateContent"
 
-GEMINI_RATE_LIMIT_DELAY = 10
+# FIX #7: tunable rate-limit handling. Free-tier Gemini keys often allow only
+# a handful of requests per minute, so a flat "sleep 10s, retry 3x" pattern
+# can fail every single time once you're throttled. These are now:
+#   - GEMINI_RATE_LIMIT_DELAY: pause between *successful* calls, to avoid
+#     tripping the limit in the first place. Try 30-60 for free-tier keys.
+#   - GEMINI_RETRY_BASE_DELAY + GEMINI_MAX_RETRIES: exponential backoff when
+#     a 429 does happen (base * 2^(attempt-1): e.g. 20s, 40s, 80s).
+#   - MAX_JOBS_PER_RUN: caps how many new items are processed per run, so a
+#     backlog of 50 feed items doesn't burn your whole daily quota in one go.
+#     Unprocessed items are simply left unmarked and picked up next run.
+GEMINI_RATE_LIMIT_DELAY = int(os.environ.get("GEMINI_RATE_LIMIT_DELAY", "20"))
+GEMINI_RETRY_BASE_DELAY = int(os.environ.get("GEMINI_RETRY_BASE_DELAY", "20"))
+GEMINI_MAX_RETRIES = int(os.environ.get("GEMINI_MAX_RETRIES", "3"))
+MAX_JOBS_PER_RUN = int(os.environ.get("MAX_JOBS_PER_RUN", "5"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -155,13 +171,14 @@ def extract_job_fields(title: str, content: str) -> dict | str | None:
     }
 
     resp = None
-    for attempt in range(1, 4):
+    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
         try:
             resp = requests.post(f"{GEMINI_TEXT_ENDPOINT}?key={api_key}", json=payload, timeout=30)
 
             if resp.status_code == 429:
-                logger.warning(f"Attempt {attempt}: Gemini text generation rate-limited (429). Sleeping 20s...")
-                time.sleep(20)
+                backoff = GEMINI_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(f"Attempt {attempt}/{GEMINI_MAX_RETRIES}: Gemini text generation rate-limited (429). Sleeping {backoff}s...")
+                time.sleep(backoff)
                 continue
 
             if resp.status_code != 200:
@@ -251,32 +268,42 @@ def generate_job_image(title: str, content: str) -> bytes | None:
         }
     }
 
-    try:
-        resp = requests.post(f"{GEMINI_IMAGE_ENDPOINT}?key={api_key}", json=payload, timeout=45)
+    # Image generation shares the same Gemini quota, so it gets the same
+    # exponential backoff treatment -- but capped at 2 attempts since the
+    # image is best-effort (the text message still gets sent without one).
+    image_max_retries = min(GEMINI_MAX_RETRIES, 2)
+    for attempt in range(1, image_max_retries + 1):
+        try:
+            resp = requests.post(f"{GEMINI_IMAGE_ENDPOINT}?key={api_key}", json=payload, timeout=45)
 
-        if resp.status_code == 429:
-            logger.warning("Gemini Image API rate-limited (429). Skipping image generation.")
+            if resp.status_code == 429:
+                backoff = GEMINI_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(f"Attempt {attempt}/{image_max_retries}: Gemini Image API rate-limited (429). Sleeping {backoff}s...")
+                time.sleep(backoff)
+                continue
+
+            if resp.status_code != 200:
+                logger.warning(f"Gemini Image API Error {resp.status_code}: {resp.text}")
+                return None
+
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return None
+
+            parts = candidates[0].get("content", {}).get("parts", [])
+            for part in parts:
+                inline_data = part.get("inlineData") or part.get("inline_data")
+                if inline_data and "data" in inline_data:
+                    logger.info("AI banner image successfully generated.")
+                    return base64.b64decode(inline_data["data"])
             return None
 
-        if resp.status_code != 200:
-            logger.warning(f"Gemini Image API Error {resp.status_code}: {resp.text}")
+        except Exception as e:
+            logger.error(f"Image generation failed: {e}")
             return None
 
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            return None
-
-        parts = candidates[0].get("content", {}).get("parts", [])
-        for part in parts:
-            inline_data = part.get("inlineData") or part.get("inline_data")
-            if inline_data and "data" in inline_data:
-                logger.info("AI banner image successfully generated.")
-                return base64.b64decode(inline_data["data"])
-
-    except Exception as e:
-        logger.error(f"Image generation failed: {e}")
-
+    logger.warning("Gemini Image API still rate-limited after retries. Skipping image for this post.")
     return None
 
 
@@ -357,6 +384,7 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
 
     seen_this_run = set()
     new_jobs_sent = 0
+    processed_this_run = 0  # FIX #7: counts toward MAX_JOBS_PER_RUN
 
     for item in items:
         try:
@@ -376,8 +404,20 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
             if full_url in seen_this_run or is_job_seen(conn, full_url):
                 continue
 
+            # FIX #7: stop after MAX_JOBS_PER_RUN so a big backlog can't burn
+            # the whole daily/per-minute Gemini quota in a single run. Items
+            # left unprocessed here are NOT marked as seen, so they'll be
+            # picked up automatically on the next scheduled run.
+            if processed_this_run >= MAX_JOBS_PER_RUN:
+                logger.info(
+                    f"[{site_name}] Reached MAX_JOBS_PER_RUN={MAX_JOBS_PER_RUN} for this run; "
+                    f"remaining items will be picked up on the next run."
+                )
+                break
+
             seen_this_run.add(full_url)
-            logger.info(f"[{site_name}] Processing: {text[:80]}")
+            processed_this_run += 1
+            logger.info(f"[{site_name}] Processing ({processed_this_run}/{MAX_JOBS_PER_RUN}): {text[:80]}")
 
             article_text = ""
             if content_tag:
