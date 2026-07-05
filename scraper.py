@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-WB Government Job Scraper (RSS) -> Gemini (Strict HTML Template) -> Telegram
+WB Government Job Scraper (RSS) -> Gemini AI (Text & Image) -> Telegram
 ==============================================================================
+Scrapes government job feeds, extracts details, generates a Bengali HTML summary
+and a modern AI banner card, and broadcasts both to a Telegram channel.
 """
 
+import base64
 import logging
 import os
 import sqlite3
@@ -32,8 +35,13 @@ HEADERS = {
 }
 
 DB_FILE = "jobs.db"
-GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+# Gemini Models
+GEMINI_TEXT_MODEL = "gemini-2.5-flash"
+GEMINI_IMAGE_MODEL = "gemini-2.5-flash-image"
+
+GEMINI_TEXT_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_TEXT_MODEL}:generateContent"
+GEMINI_IMAGE_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_IMAGE_MODEL}:generateContent"
 
 GEMINI_RATE_LIMIT_DELAY = 10 
 
@@ -77,7 +85,7 @@ def mark_job_seen(conn: sqlite3.Connection, url: str, title: str, source: str) -
 
 
 # --------------------------------------------------------------------------
-# Gemini AI Layer
+# Gemini AI Layer (Text & Image Generation)
 # --------------------------------------------------------------------------
 
 def build_gemini_prompt(title: str, content: str) -> str:
@@ -122,27 +130,26 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
     resp = None
     for attempt in range(1, 4):
         try:
-            resp = requests.post(f"{GEMINI_ENDPOINT}?key={api_key}", json=payload, timeout=30)
+            resp = requests.post(f"{GEMINI_TEXT_ENDPOINT}?key={api_key}", json=payload, timeout=30)
             
             if resp.status_code == 429:
-                logger.warning(f"Attempt {attempt}: Gemini rate-limited (429). Sleeping 20s...")
+                logger.warning(f"Attempt {attempt}: Gemini text generation rate-limited (429). Sleeping 20s...")
                 time.sleep(20)
                 continue
                 
             if resp.status_code != 200:
-                logger.error(f"Gemini API Error {resp.status_code}: {resp.text}")
+                logger.error(f"Gemini Text API Error {resp.status_code}: {resp.text}")
                 resp.raise_for_status()
 
             data = resp.json()
-            
             if "candidates" in data and not data["candidates"][0].get("content"):
-                logger.error(f"Gemini blocked this content due to safety filters: {data}")
+                logger.error(f"Gemini blocked text content due to safety filters: {data}")
                 return None
 
             return data["candidates"][0]["content"]["parts"][0]["text"].strip()
             
         except (requests.exceptions.RequestException, KeyError, IndexError, ValueError) as e:
-            logger.error(f"Gemini API parsing error on attempt {attempt}: {e}")
+            logger.error(f"Gemini Text API parsing error on attempt {attempt}: {e}")
             time.sleep(5)
             
     if resp is not None and resp.status_code == 429:
@@ -151,18 +158,103 @@ def generate_bengali_summary(title: str, content: str) -> str | None:
     return None
 
 
+def generate_job_image(title: str, content: str) -> bytes | None:
+    """Generates a modern AI banner image featuring Bengali typography for the job post."""
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    logger.info("Generating AI banner image for job post...")
+    
+    prompt = (
+        f"Create a modern, vibrant, high-resolution digital announcement card/banner for a West Bengal government job vacancy.\n"
+        f"Job Title: {title}\n"
+        f"Context Details: {content[:400]}\n\n"
+        f"Visual Requirements:\n"
+        f"- Professional Indian government employment infographic aesthetic.\n"
+        f"- Include clean, legible Bengali typography summarizing the job title/post prominently on the banner.\n"
+        f"- Color scheme: Deep corporate royal blue, elegant gold, and clean white highlights.\n"
+        f"- Modern layout featuring subtle digital UI elements, official-style badges, and clean design composition suitable for social media announcement."
+    )
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseModalities": ["IMAGE", "TEXT"]
+        }
+    }
+
+    try:
+        resp = requests.post(f"{GEMINI_IMAGE_ENDPOINT}?key={api_key}", json=payload, timeout=45)
+        
+        if resp.status_code == 429:
+            logger.warning("Gemini Image API rate-limited (429). Skipping image generation.")
+            return None
+            
+        if resp.status_code != 200:
+            logger.warning(f"Gemini Image API Error {resp.status_code}: {resp.text}")
+            return None
+
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return None
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        for part in parts:
+            inline_data = part.get("inlineData") or part.get("inline_data")
+            if inline_data and "data" in inline_data:
+                logger.info("AI banner image successfully generated.")
+                return base64.b64decode(inline_data["data"])
+                
+    except Exception as e:
+        logger.error(f"Image generation failed: {e}")
+
+    return None
+
+
 # --------------------------------------------------------------------------
 # Telegram Broadcast Layer
 # --------------------------------------------------------------------------
 
-def send_to_telegram(message: str) -> bool:
+def send_to_telegram(message: str, image_bytes: bytes | None = None) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     channel_id = os.environ.get("TELEGRAM_CHANNEL_ID", "").strip()
     
     if not token or not channel_id:
+        logger.error("Telegram credentials missing.")
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    # Attempt to send as Photo if image exists
+    if image_bytes:
+        photo_url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        
+        # Telegram sendPhoto captions have a strict 1024-character limit
+        if len(message) <= 1000:
+            try:
+                files = {"photo": ("job_post.png", image_bytes, "image/png")}
+                payload = {
+                    "chat_id": channel_id,
+                    "caption": message,
+                    "parse_mode": "HTML"
+                }
+                resp = requests.post(photo_url, data=payload, files=files, timeout=30)
+                resp.raise_for_status()
+                return True
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Telegram sendPhoto with caption failed ({e}). Attempting split broadcast...")
+
+        # If caption exceeds 1000 chars or combined send failed: Send photo first, then text
+        try:
+            files = {"photo": ("job_post.png", image_bytes, "image/png")}
+            resp_img = requests.post(photo_url, data={"chat_id": channel_id}, files=files, timeout=30)
+            resp_img.raise_for_status()
+            logger.info("Standalone image banner broadcast successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to send image banner: {e}")
+
+    # Broadcast standard Text Message (up to 4096 chars)
+    text_url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": channel_id,
         "text": message,
@@ -171,11 +263,11 @@ def send_to_telegram(message: str) -> bool:
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=20)
+        resp = requests.post(text_url, json=payload, timeout=20)
         resp.raise_for_status()
         return True
     except requests.exceptions.RequestException as e:
-        logger.error(f"Telegram send failed: {e}")
+        logger.error(f"Telegram sendMessage failed: {e}")
         return False
 
 
@@ -229,7 +321,6 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
                 href = a_tag["href"].strip()
                 anchor_text = a_tag.get_text(strip=True)
                 
-                # Filter out aggregator internal links, social media, and junk
                 lower_href = href.lower()
                 if not href or href.startswith(("#", "javascript", "mailto")):
                     continue
@@ -241,29 +332,36 @@ def scrape_site(session: requests.Session, site_name: str, url: str, conn: sqlit
             # 2. Extract plain text
             article_text = article_soup.get_text(separator="\n", strip=True)
             
-            # 3. Append the extracted links to the text for Gemini to analyze
+            # 3. Append extracted links for Gemini analysis
             if external_links:
-                unique_links = list(dict.fromkeys(external_links))[:5] # Keep it to the top 5 unique links
+                unique_links = list(dict.fromkeys(external_links))[:5]
                 article_text += "\n\nPOSSIBLE OFFICIAL LINKS FOUND:\n" + "\n".join(unique_links)
 
         article_text = article_text[:4000]
 
+        # Generate Text Summary
         bengali_message = generate_bengali_summary(text, article_text)
         time.sleep(GEMINI_RATE_LIMIT_DELAY)
 
         if bengali_message == "RATE_LIMIT_EXHAUSTED":
-            logger.error("API quota exhausted. Halting the scraper to save GitHub Actions minutes.")
+            logger.error("API quota exhausted. Halting scraper run.")
             return new_jobs_sent
 
         if not bengali_message:
-            logger.warning(f"Gemini failed for '{text[:50]}'; will retry next run.")
+            logger.warning(f"Gemini summary failed for '{text[:50]}'; skipping.")
             continue
 
-        if send_to_telegram(bengali_message):
+        # Generate AI Image Banner
+        image_bytes = generate_job_image(text, article_text)
+        if image_bytes:
+            time.sleep(5)  # Brief pause between AI calls
+
+        # Broadcast to Telegram
+        if send_to_telegram(bengali_message, image_bytes):
             mark_job_seen(conn, full_url, text, site_name)
             new_jobs_sent += 1
         else:
-            logger.warning(f"Telegram send failed for {full_url}; will retry next run.")
+            logger.warning(f"Telegram broadcast failed for {full_url}; will retry next run.")
 
     return new_jobs_sent
 
