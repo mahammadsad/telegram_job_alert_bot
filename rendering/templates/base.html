@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @font-face { font-family: "Noto Bengali"; src: local("Noto Sans Bengali"); }
+    * { box-sizing: border-box; }
+    html, body { width: 1080px; height: 1080px; margin: 0; overflow: hidden; }
+    body {
+      font-family: "Noto Sans Bengali", "Noto Bengali", sans-serif;
+      color: #102030; background: #eef4f7;
+    }
+    .card { width: 1080px; height: 1080px; background: #fff; position: relative; overflow: hidden; }
+    .top { height: 190px; padding: 50px 64px; color: #fff; background: linear-gradient(125deg, {{ primary }}, {{ accent }}); }
+    .brand { font-size: 34px; font-weight: 800; letter-spacing: .4px; }
+    .category { margin-top: 12px; font-size: 28px; opacity: .94; }
+    .hero-icon { position: absolute; right: 62px; top: 40px; font-size: 92px; filter: grayscale(.1); }
+    .content { padding: 38px 66px 24px; }
+    h1 { margin: 0 0 26px; font-size: 50px; line-height: 1.23; color: {{ primary }}; max-height: 188px; overflow: hidden; }
+    .facts { display: grid; gap: 12px; }
+    .fact { border-left: 8px solid {{ accent }}; background: #f5f8fa; padding: 9px 20px; border-radius: 0 14px 14px 0; height: 76px; overflow: hidden; }
+    .label { color: #52616b; font-size: 19px; line-height: 1.12; font-weight: 700; }
+    .value { color: #12232e; font-size: 25px; font-weight: 750; line-height: 1.23; max-height: 58px; overflow: hidden; }
+    .footer { position: absolute; bottom: 0; width: 100%; min-height: 106px; background: #102c3c; color: #fff; padding: 24px 66px; display: flex; justify-content: space-between; align-items: center; }
+    .verified { color: #91e3b1; font-size: 25px; font-weight: 750; }
+    .review { color: #ffd479; font-size: 25px; font-weight: 750; }
+    .safety { font-size: 19px; opacity: .85; }
+  </style>
+</head>
+<body><main class="card">
+  <header class="top"><div class="brand">সরকারি তথ্যকেন্দ্র</div><div class="category">{{ category_label }}</div><div class="hero-icon">{{ icon }}</div></header>
+  <section class="content"><h1>{{ title }}</h1><div class="facts">{% for fact in facts %}<div class="fact"><div class="label">{{ fact.label }}</div><div class="value">{{ fact.value }}</div></div>{% endfor %}</div></section>
+  <footer class="footer"><div>{% if verified %}<div class="verified">✓ অফিসিয়াল উৎস থেকে যাচাইকৃত</div>{% elif review %}<div class="review">যাচাইাধীন — শুধু প্রশাসনিক পর্যালোচনা</div>{% endif %}<div class="safety">পদক্ষেপের আগে অফিসিয়াল বিজ্ঞপ্তি পড়ুন</div></div><div class="brand">তথ্য • যাচাই • সেবা</div></footer>
+</main></body></html>

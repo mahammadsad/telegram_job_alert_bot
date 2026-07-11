@@ -1,0 +1,2 @@
+"""Notice discovery adapters."""
+

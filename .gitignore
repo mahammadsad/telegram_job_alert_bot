@@ -1,0 +1,9 @@
+.env
+__pycache__/
+.pytest_cache/
+*.py[cod]
+dry_run_output/*
+render_samples/*
+!dry_run_output/.gitkeep
+!render_samples/.gitkeep
+

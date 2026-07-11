@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import html
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from config.loader import load_yaml
+from processing.models import ExtractedNotice, NoticeCategory
+
+
+FIELD_LABELS = {
+    "department": "বিভাগ", "post_name": "পদের নাম", "total_vacancies": "মোট শূন্যপদ",
+    "qualifications": "যোগ্যতা", "age_limit": "বয়সসীমা", "salary": "বেতন",
+    "deadline": "শেষ তারিখ", "application_start": "আবেদন শুরু", "application_fee": "আবেদন ফি",
+    "apply_mode": "আবেদন পদ্ধতি", "selection_process": "নির্বাচন পদ্ধতি",
+    "scheme_name": "প্রকল্পের নাম", "benefit": "সুবিধা", "eligibility": "যোগ্যতা",
+    "age_requirement": "বয়সের শর্ত", "income_limit": "আয়ের সীমা",
+    "required_documents": "প্রয়োজনীয় নথি", "application_method": "আবেদন পদ্ধতি",
+    "beneficiary_group": "উপভোক্তা", "scholarship_name": "স্কলারশিপ",
+    "provider": "প্রদানকারী", "benefit_amount": "সহায়তার পরিমাণ",
+    "educational_eligibility": "শিক্ষাগত যোগ্যতা", "institution": "প্রতিষ্ঠান",
+    "renewal_or_fresh": "নতুন/নবীকরণ",
+    "course_or_program": "কোর্স", "academic_session": "শিক্ষাবর্ষ",
+    "course": "কোর্স", "semester_or_year": "সেমেস্টার/বর্ষ",
+    "board_or_university": "বোর্ড/বিশ্ববিদ্যালয়", "exam_name": "পরীক্ষা",
+    "result_date": "ফল প্রকাশ", "credentials_required": "যা প্রয়োজন",
+    "rechecking_or_review_information": "পুনর্মূল্যায়ন/রিভিউ",
+    "conducting_body": "পরিচালনাকারী সংস্থা", "exam_date": "পরীক্ষার তারিখ",
+    "exam_time": "সময়", "admit_card_date": "অ্যাডমিট কার্ড",
+    "exam_mode": "পরীক্ষার মাধ্যম", "exam_centres": "পরীক্ষাকেন্দ্র",
+    "candidate_instructions": "প্রার্থীদের নির্দেশিকা",
+    "notice_subject": "নোটিশের বিষয়", "affected_students": "যাঁদের জন্য",
+    "important_date": "গুরুত্বপূর্ণ তারিখ", "action_required": "করণীয়",
+    "submission_portal_or_office": "জমা দেওয়ার স্থান/পোর্টাল",
+    "counselling_information": "কাউন্সেলিং তথ্য",
+    "issuing_department": "প্রকাশকারী বিভাগ", "announcement_subject": "ঘোষণার বিষয়",
+    "affected_people": "যাঁদের জন্য", "effective_date": "কার্যকর হওয়ার তারিখ",
+    "service_or_portal": "পরিষেবা/পোর্টাল",
+}
+ICONS = ["🏛️", "📌", "📅", "✅", "📝"]
+URL_FIELDS = {
+    "official_notification_url", "official_application_url", "official_information_url",
+    "official_result_url", "official_notice_url", "official_routine_url",
+}
+
+
+def _escape(value: object) -> str:
+    if isinstance(value, list):
+        value = ", ".join(str(item) for item in value)
+    return html.escape(str(value), quote=False)
+
+
+def public_fields(extracted: ExtractedNotice, limit: int | None = None) -> list[tuple[str, object]]:
+    values = [
+        (name, field.value)
+        for name, field in extracted.fields.items()
+        if field.value is not None and name not in URL_FIELDS
+    ]
+    return values[:limit] if limit else values
+
+
+def format_telegram_message(extracted: ExtractedNotice, checked_at: datetime | None = None) -> str:
+    config = load_yaml("categories.yaml")["categories"][extracted.category.value]
+    checked_at = checked_at or datetime.now(ZoneInfo("Asia/Kolkata"))
+    lines = [
+        f"{category_icon(extracted.category)} <b>{_escape(config['label'])}</b>",
+        "",
+        f"<b>{_escape(extracted.title_bn)}</b>",
+        "",
+    ]
+    for index, (name, value) in enumerate(public_fields(extracted)):
+        label = FIELD_LABELS.get(name, name.replace("_", " ").title())
+        lines.append(f"{ICONS[index % len(ICONS)]} <b>{_escape(label)}:</b> {_escape(value)}")
+    action = extracted.fields.get("action_required")
+    if action and action.value:
+        lines.extend(["", f"👉 <b>করণীয়:</b> {_escape(action.value)}"])
+    links = official_links(extracted)
+    if links:
+        lines.extend(["", "🔗 <b>অফিসিয়াল লিঙ্ক:</b>"])
+        for label, url in links:
+            lines.append(f'• <a href="{html.escape(url, quote=True)}">{_escape(label)}</a>')
+    lines.extend(
+        [
+            "",
+            "━━━━━━━━━━━━━━",
+            "🛡️ তথ্যের অবস্থা: অফিসিয়াল উৎস থেকে যাচাইকৃত",
+            f"🗓️ সর্বশেষ যাচাই: {checked_at.strftime('%d-%m-%Y %I:%M %p')}",
+            "⚠️ আবেদন বা পদক্ষেপ নেওয়ার আগে অফিসিয়াল বিজ্ঞপ্তি পড়ুন।",
+            "",
+            " ".join(config["hashtags"][:4]),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def official_links(extracted: ExtractedNotice) -> list[tuple[str, str]]:
+    labels = {
+        "official_notification_url": "অফিসিয়াল বিজ্ঞপ্তি",
+        "official_application_url": "অনলাইনে আবেদন",
+        "official_information_url": "অফিসিয়াল তথ্য",
+        "official_result_url": "রেজাল্ট দেখুন",
+        "official_notice_url": "অফিসিয়াল নোটিশ",
+        "official_routine_url": "অফিসিয়াল রুটিন",
+    }
+    return [
+        (labels[name], str(extracted.fields[name].value))
+        for name in labels
+        if name in extracted.fields and extracted.fields[name].value
+    ]
+
+
+def category_icon(category: NoticeCategory) -> str:
+    return {
+        NoticeCategory.JOB: "💼", NoticeCategory.WELFARE_SCHEME: "🤝",
+        NoticeCategory.SCHOLARSHIP: "🎓", NoticeCategory.ADMISSION: "🏫",
+        NoticeCategory.RESULT: "📋", NoticeCategory.EXAMINATION: "🗓️",
+        NoticeCategory.EDUCATION_NOTICE: "📚", NoticeCategory.UNIVERSITY_NOTICE: "🏛️",
+        NoticeCategory.GOVERNMENT_ANNOUNCEMENT: "📢",
+    }[category]

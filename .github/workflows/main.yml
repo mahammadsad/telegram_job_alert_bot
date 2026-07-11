@@ -1,46 +1,89 @@
-name: WB Govt Job Scraper
+name: Bengali Government Information Bot
+
 on:
   schedule:
     # Every 2 hours, 02:00-14:00 UTC == 7:30 AM-7:30 PM IST
     - cron: "0 2-14/2 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Process and render without Telegram"
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: write
-# Prevents overlapping runs (e.g. a manual trigger firing while a
-# scheduled run is still in progress) from racing on jobs.db.
+
 concurrency:
-  group: wb-job-scraper
+  group: bengali-government-information-bot
   cancel-in-progress: false
+
 jobs:
-  scrape-and-broadcast:
+  discover-verify-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install dependencies
+          cache: pip
+
+      - name: Install Python dependencies
         run: pip install -r requirements.txt
-      - name: Run scraper
+
+      - name: Install Chromium and Bengali fonts
+        run: |
+          python -m playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-core fonts-noto-extra fonts-noto-color-emoji
+          fc-cache -f
+
+      - name: Apply database migrations
+        run: python scripts/migrate.py
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Discover, verify, render and publish
         env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: python scraper.py
-      - name: Commit and push updated database (only if changed)
+          TELEGRAM_REVIEW_CHAT_ID: ${{ secrets.TELEGRAM_REVIEW_CHAT_ID }}
+          GROQ_TEXT_MODEL: ${{ vars.GROQ_TEXT_MODEL || 'llama-3.3-70b-versatile' }}
+          GROQ_RATE_LIMIT_DELAY: ${{ vars.GROQ_RATE_LIMIT_DELAY || '3' }}
+          GROQ_RETRY_BASE_DELAY: ${{ vars.GROQ_RETRY_BASE_DELAY || '20' }}
+          GROQ_MAX_RETRIES: ${{ vars.GROQ_MAX_RETRIES || '3' }}
+          GROQ_DAILY_TEXT_LIMIT: ${{ vars.GROQ_DAILY_TEXT_LIMIT || '1000' }}
+          MAX_ITEMS_PER_RUN: ${{ vars.MAX_ITEMS_PER_RUN || '5' }}
+          AUTO_POST_ENABLED: ${{ vars.AUTO_POST_ENABLED || 'true' }}
+          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: python app.py
+
+      - name: Upload dry-run cards
+        if: ${{ inputs.dry_run }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-output
+          path: dry_run_output/
+          if-no-files-found: ignore
+
+      - name: Commit database only when changed
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add jobs.db
           if git diff --staged --quiet; then
-            echo "No new jobs found this run. Nothing to commit."
+            echo "Database unchanged."
           else
-            git commit -m "chore: update job database with new listings [skip ci]"
+            git commit -m "chore: update notice database [skip ci]"
             git push
           fi

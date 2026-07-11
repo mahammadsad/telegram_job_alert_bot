@@ -1,0 +1,29 @@
+categories:
+  JOB:
+    label: "সরকারি চাকরি"
+    hashtags: ["#সরকারি_চাকরি", "#JobUpdate", "#WestBengal"]
+  WELFARE_SCHEME:
+    label: "সরকারি প্রকল্প"
+    hashtags: ["#সরকারি_প্রকল্প", "#WestBengalScheme"]
+  SCHOLARSHIP:
+    label: "স্কলারশিপ"
+    hashtags: ["#স্কলারশিপ", "#ScholarshipUpdate"]
+  ADMISSION:
+    label: "ভর্তি"
+    hashtags: ["#ভর্তি", "#AdmissionUpdate"]
+  RESULT:
+    label: "ফলাফল"
+    hashtags: ["#ফলাফল", "#ResultUpdate"]
+  EXAMINATION:
+    label: "পরীক্ষার আপডেট"
+    hashtags: ["#পরীক্ষার_আপডেট", "#ExamUpdate"]
+  EDUCATION_NOTICE:
+    label: "শিক্ষা নোটিশ"
+    hashtags: ["#শিক্ষা_নোটিশ", "#EducationUpdate"]
+  UNIVERSITY_NOTICE:
+    label: "বিশ্ববিদ্যালয় নোটিশ"
+    hashtags: ["#বিশ্ববিদ্যালয়_নোটিশ", "#EducationUpdate"]
+  GOVERNMENT_ANNOUNCEMENT:
+    label: "সরকারি ঘোষণা"
+    hashtags: ["#সরকারি_ঘোষণা", "#PublicService"]
+

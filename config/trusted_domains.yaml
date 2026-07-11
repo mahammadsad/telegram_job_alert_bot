@@ -1,0 +1,16 @@
+# Exact hosts and their subdomains are trusted. A name merely containing one
+# of these strings is never trusted.
+trusted_domains:
+  - wb.gov.in
+  - psc.wb.gov.in
+  - prb.wb.gov.in
+  - wbbse.wb.gov.in
+  - wbchse.wb.gov.in
+  - wbjeeb.nic.in
+  - scholarships.gov.in
+  - results.gov.in
+  - education.gov.in
+  - nta.ac.in
+  - upsc.gov.in
+  - ssc.gov.in
+

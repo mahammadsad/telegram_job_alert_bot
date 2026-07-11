@@ -1,0 +1,71 @@
+sources:
+  - name: Karmasandhan
+    url: https://www.karmasandhan.com/feed/
+    parser_type: rss
+    categories: [JOB]
+    official: false
+    discovery_only: true
+    enabled: true
+    allowed_domains: [karmasandhan.com]
+    allowed_document_domains: []
+    min_interval_minutes: 120
+    request_timeout: 20
+    max_items: 20
+
+  # Disabled until each site's current listing selectors and terms have been
+  # manually checked. Enabling a guessed scraper would create false notices.
+  - name: West Bengal State Portal
+    url: https://wb.gov.in/
+    parser_type: html
+    categories: [WELFARE_SCHEME, GOVERNMENT_ANNOUNCEMENT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify a stable public notice-list selector before enabling."
+    allowed_domains: [wb.gov.in]
+  - name: WB Public Service Commission
+    url: https://psc.wb.gov.in/
+    parser_type: html
+    categories: [JOB, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify notice-list selectors before enabling."
+    allowed_domains: [psc.wb.gov.in]
+  - name: West Bengal Police Recruitment Board
+    url: https://prb.wb.gov.in/
+    parser_type: html
+    categories: [JOB, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify notice-list selectors before enabling."
+    allowed_domains: [prb.wb.gov.in]
+  - name: WBBSE
+    url: https://wbbse.wb.gov.in/
+    parser_type: html
+    categories: [RESULT, EXAMINATION, EDUCATION_NOTICE]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify notice-list selectors before enabling."
+    allowed_domains: [wbbse.wb.gov.in]
+  - name: WBCHSE
+    url: https://wbchse.wb.gov.in/
+    parser_type: html
+    categories: [RESULT, EXAMINATION, EDUCATION_NOTICE]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify notice-list selectors before enabling."
+    allowed_domains: [wbchse.wb.gov.in]
+  - name: WBJEEB
+    url: https://wbjeeb.nic.in/
+    parser_type: html
+    categories: [ADMISSION, RESULT, EXAMINATION]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Verify notice-list selectors before enabling."
+    allowed_domains: [wbjeeb.nic.in]
+

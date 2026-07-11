@@ -1,3 +1,10 @@
-requests>=2.31
-beautifulsoup4>=4.12
-lxml>=5.0
+requests>=2.32,<3
+beautifulsoup4>=4.12,<5
+lxml>=5.2,<7
+PyYAML>=6.0,<7
+pydantic>=2.8,<3
+Jinja2>=3.1,<4
+playwright>=1.48,<2
+PyMuPDF>=1.24,<2
+python-dateutil>=2.9,<3
+pytest>=8.3,<10
