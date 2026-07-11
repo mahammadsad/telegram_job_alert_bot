@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 import requests
@@ -11,6 +11,30 @@ from processing.models import DiscoveredItem
 
 
 USER_AGENT = "SarkariTathyaKendraBot/1.0 (+Telegram public-information bot)"
+MAX_SOURCE_REDIRECTS = 5
+
+
+def hostname_is_allowed(hostname: str | None, allowed_domains: tuple[str, ...]) -> bool:
+    host = (hostname or "").lower().rstrip(".")
+    return bool(host) and any(
+        host == domain or host.endswith("." + domain) for domain in allowed_domains
+    )
+
+
+def source_url_is_allowed(url: str, allowed_domains: tuple[str, ...]) -> bool:
+    try:
+        parsed = urlparse(url)
+        port = parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme == "https"
+        and parsed.hostname
+        and not parsed.username
+        and not parsed.password
+        and port in {None, 443}
+        and hostname_is_allowed(parsed.hostname, allowed_domains)
+    )
 
 
 @dataclass(frozen=True)
@@ -35,8 +59,12 @@ class SourceConfig:
     def from_dict(cls, data: dict) -> "SourceConfig":
         allowed = {field.name for field in cls.__dataclass_fields__.values()}
         clean = {key: value for key, value in data.items() if key in allowed}
-        clean["allowed_domains"] = tuple(clean.get("allowed_domains", ()))
-        clean["allowed_document_domains"] = tuple(clean.get("allowed_document_domains", ()))
+        clean["allowed_domains"] = tuple(
+            str(value).lower().rstrip(".") for value in clean.get("allowed_domains", ())
+        )
+        clean["allowed_document_domains"] = tuple(
+            str(value).lower().rstrip(".") for value in clean.get("allowed_document_domains", ())
+        )
         return cls(**clean)
 
 
@@ -44,7 +72,8 @@ class BaseSource(ABC):
     def __init__(self, config: SourceConfig, session: requests.Session | None = None):
         self.config = config
         self.session = session or requests.Session()
-        self.session.headers.update({"User-Agent": USER_AGENT})
+        if hasattr(self.session, "headers"):
+            self.session.headers.update({"User-Agent": USER_AGENT})
 
     def robots_allowed(self) -> bool:
         parsed = urlparse(self.config.url)
@@ -52,7 +81,13 @@ class BaseSource(ABC):
         parser = RobotFileParser()
         parser.set_url(robots_url)
         try:
-            response = self.session.get(robots_url, timeout=self.config.request_timeout)
+            response = self.session.get(
+                robots_url,
+                timeout=self.config.request_timeout,
+                allow_redirects=False,
+            )
+            if response.is_redirect or response.is_permanent_redirect:
+                return False
             if response.status_code >= 400:
                 return True
             parser.parse(response.text.splitlines())
@@ -61,19 +96,26 @@ class BaseSource(ABC):
             return True
 
     def fetch(self) -> requests.Response:
-        response = self.session.get(
-            self.config.url,
-            timeout=self.config.request_timeout,
-            allow_redirects=True,
-        )
-        response.raise_for_status()
-        final_host = (urlparse(response.url).hostname or "").lower().rstrip(".")
-        if self.config.allowed_domains and not any(
-            final_host == domain or final_host.endswith("." + domain)
-            for domain in self.config.allowed_domains
-        ):
-            raise ValueError(f"source redirected to an unapproved domain: {final_host}")
-        return response
+        current = self.config.url
+        for _ in range(MAX_SOURCE_REDIRECTS + 1):
+            if not source_url_is_allowed(current, self.config.allowed_domains):
+                raise ValueError(f"source URL is not HTTPS or has an unapproved host: {current}")
+            response = self.session.get(
+                current,
+                timeout=self.config.request_timeout,
+                allow_redirects=False,
+            )
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location")
+                if not location:
+                    raise ValueError("source redirect response has no Location")
+                current = urljoin(current, location)
+                continue
+            response.raise_for_status()
+            if not source_url_is_allowed(response.url, self.config.allowed_domains):
+                raise ValueError(f"source returned an unapproved final URL: {response.url}")
+            return response
+        raise ValueError("source exceeded the redirect limit")
 
     @abstractmethod
     def parse(self, content: bytes, base_url: str) -> list[DiscoveredItem]:

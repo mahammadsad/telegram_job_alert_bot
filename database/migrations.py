@@ -92,6 +92,41 @@ MIGRATIONS: list[tuple[int, str]] = [
             PRIMARY KEY(provider, usage_date, operation)
         );
     """),
+    (2, """
+        ALTER TABLE notices ADD COLUMN canonical_official_url TEXT;
+        ALTER TABLE notices ADD COLUMN discovery_summary TEXT;
+        ALTER TABLE notices ADD COLUMN candidate_official_links_json TEXT;
+        ALTER TABLE notices ADD COLUMN source_official INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE notices ADD COLUMN discovery_only INTEGER NOT NULL DEFAULT 1;
+        CREATE INDEX IF NOT EXISTS idx_notices_canonical_official_url
+            ON notices(canonical_official_url);
+        CREATE INDEX IF NOT EXISTS idx_source_checks_name_checked
+            ON source_checks(source_name, checked_at);
+    """),
+    (3, """
+        ALTER TABLE notice_revisions RENAME TO notice_revisions_old;
+        CREATE TABLE notice_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            notice_id INTEGER NOT NULL REFERENCES notices(id),
+            revision_number INTEGER NOT NULL,
+            content_sha256 TEXT NOT NULL,
+            final_resolved_url TEXT,
+            structured_data_json TEXT,
+            evidence_json TEXT,
+            detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(notice_id, revision_number)
+        );
+        INSERT INTO notice_revisions (
+            id, notice_id, revision_number, content_sha256, final_resolved_url,
+            structured_data_json, evidence_json, detected_at
+        )
+        SELECT id, notice_id, revision_number, content_sha256, final_resolved_url,
+               structured_data_json, evidence_json, detected_at
+        FROM notice_revisions_old;
+        DROP TABLE notice_revisions_old;
+        CREATE INDEX idx_notice_revisions_hash
+            ON notice_revisions(notice_id, content_sha256);
+    """),
 ]
 
 
@@ -148,4 +183,3 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     migrated = migrate_legacy_seen_jobs(conn)
     conn.commit()
     logger.info("database_migration legacy_rows_added=%s", migrated)
-

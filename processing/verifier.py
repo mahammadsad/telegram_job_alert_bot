@@ -16,13 +16,18 @@ from sources.pdf_source import extract_pdf
 
 logger = logging.getLogger(__name__)
 SHORTENERS = {"bit.ly", "tinyurl.com", "t.co", "goo.gl", "cutt.ly", "shorturl.at"}
+MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 
 def hostname_is_trusted(hostname: str | None, trusted_domains: set[str]) -> bool:
     host = (hostname or "").lower().rstrip(".")
     if not host or host in SHORTENERS:
         return False
-    return any(host == domain or host.endswith("." + domain) for domain in trusted_domains)
+    return any(
+        host == domain.lower().rstrip(".")
+        or host.endswith("." + domain.lower().rstrip("."))
+        for domain in trusted_domains
+    )
 
 
 def validate_official_url(url: str, trusted_domains: set[str]) -> bool:
@@ -49,7 +54,11 @@ def canonicalize_url(url: str) -> str:
     parsed = urlparse(url.strip())
     scheme = parsed.scheme.lower()
     host = (parsed.hostname or "").lower().rstrip(".")
-    port = f":{parsed.port}" if parsed.port and parsed.port != 443 else ""
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        parsed_port = None
+    port = f":{parsed_port}" if parsed_port and parsed_port != 443 else ""
     path = parsed.path or "/"
     if path != "/":
         path = path.rstrip("/")
@@ -117,15 +126,29 @@ class SafeFetcher:
         raise ValueError("too many redirects")
 
 
-def response_to_document(response: requests.Response, requested_url: str) -> OfficialDocument:
+def response_to_document(
+    response: requests.Response, requested_url: str, redirect_chain: list[str] | None = None
+) -> OfficialDocument:
     content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
     content = response.content
+    if len(content) > MAX_DOCUMENT_BYTES:
+        raise ValueError(f"official document exceeds {MAX_DOCUMENT_BYTES} bytes")
     final_domain = urlparse(response.url).hostname or ""
     if content_type == "application/pdf" or content.startswith(b"%PDF"):
         document = extract_pdf(content, requested_url)
         return document.model_copy(
-            update={"final_url": response.url, "final_domain": final_domain}
+            update={
+                "final_url": response.url,
+                "final_domain": final_domain,
+                "redirect_chain": redirect_chain or [requested_url],
+            }
         )
+    if content_type and not (
+        content_type.startswith("text/html")
+        or content_type.startswith("application/xhtml")
+        or content_type.startswith("text/plain")
+    ):
+        raise ValueError(f"unsupported official content type: {content_type}")
     soup = BeautifulSoup(content, "lxml")
     for node in soup(["script", "style", "noscript"]):
         node.decompose()
@@ -143,6 +166,7 @@ def response_to_document(response: requests.Response, requested_url: str) -> Off
         text=source_text,
         page_text={1: source_text},
         extracted_links=list(dict.fromkeys(links)),
+        redirect_chain=redirect_chain or [requested_url],
     )
 
 
@@ -156,8 +180,8 @@ def find_official_document(
             failures.append(f"untrusted candidate: {link}")
             continue
         try:
-            response, _ = fetcher.fetch(link)
-            return response_to_document(response, link), None
+            response, chain = fetcher.fetch(link)
+            return response_to_document(response, link, chain), None
         except Exception as exc:
             logger.warning("official_fetch_failed url=%s error=%s", link, exc)
             failures.append(f"{link}: {exc}")

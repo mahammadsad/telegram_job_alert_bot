@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 
 import fitz
 
@@ -34,7 +33,3 @@ def extract_pdf(content: bytes, source_url: str) -> OfficialDocument:
         extracted_links=list(dict.fromkeys(links)),
         scanned_pdf=len("".join(pages.values()).strip()) < MIN_PDF_TEXT,
     )
-
-
-def extract_pdf_file(path: str | Path, source_url: str = "file://fixture.pdf") -> OfficialDocument:
-    return extract_pdf(Path(path).read_bytes(), source_url)

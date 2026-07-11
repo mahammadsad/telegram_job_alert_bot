@@ -40,7 +40,15 @@ def main() -> None:
         if args.id is None:
             raise SystemExit("An item id is required for this command.")
         row = conn.execute(
-            """SELECT q.*, n.* FROM review_queue q JOIN notices n ON n.id=q.notice_id
+            """SELECT q.id AS review_id, q.notice_id, q.reason, q.status AS review_status,
+                      q.created_at AS review_created_at, q.updated_at AS review_updated_at,
+                      q.reviewer_note, n.category, n.subtype, n.title, n.discovery_url,
+                      n.official_page_url, n.official_document_url, n.final_resolved_url,
+                      n.final_domain, n.notice_number, n.notice_date, n.deadline,
+                      n.structured_data_json, n.evidence_json, n.content_sha256,
+                      n.verification_score, n.verification_status, n.conflict_reason,
+                      n.revision_number, n.render_status
+               FROM review_queue q JOIN notices n ON n.id=q.notice_id
                WHERE q.id=?""",
             (args.id,),
         ).fetchone()
@@ -88,4 +96,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

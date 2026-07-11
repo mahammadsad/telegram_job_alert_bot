@@ -128,6 +128,10 @@ Approval marks an item for fresh verification on the next schedule. It does not
 override trusted-domain, evidence, conflict, or required-field gates. No webhook
 or permanently running approval bot is required.
 
+Approved/retry items retain their discovery summary and candidate official links
+in SQLite, so the next run can reconsider them even if they have moved out of the
+source feed's newest-item window.
+
 ## Adding sources, domains, and templates
 
 To add a source, edit `config/sources.yaml`. Set its parser type and categories,
@@ -156,6 +160,9 @@ The workflow installs Chromium/fonts, migrates the database, runs tests, execute
 the pipeline, and commits `jobs.db` only when changed. Concurrency prevents two
 runs from racing on SQLite.
 
+Each source's `min_interval_minutes` is enforced through the `source_checks`
+table. Successes and failures are recorded without storing credentials.
+
 ## Database compatibility and revisions
 
 Migrations never delete `seen_jobs` or provider-history tables. Existing
@@ -164,6 +171,9 @@ Migrations never delete `seen_jobs` or provider-history tables. Existing
 SHA-256 hash. A changed response at the same canonical URL creates a new
 `notice_revisions` entry and is reprocessed as an update rather than silently
 deduplicated.
+
+Dry runs copy `jobs.db` to `dry_run_output/dry_run.db`; the production database
+and Telegram are not changed.
 
 ## Common problems
 
@@ -189,4 +199,3 @@ Official portal starters (`wb.gov.in`, WBPSC, WBPRB, WBBSE, WBCHSE, and WBJEEB)
 remain disabled in `sources.yaml` pending manual verification of current listing
 selectors. This is intentional; the configuration documents the work instead of
 pretending unverified selectors function.
-

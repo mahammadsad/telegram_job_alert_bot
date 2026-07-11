@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from html.parser import HTMLParser
 
 import requests
 
@@ -20,7 +21,24 @@ class SendResult:
 
 
 def should_split_caption(message: str) -> bool:
-    return len(message) > CAPTION_LIMIT
+    return telegram_text_length(message) > CAPTION_LIMIT
+
+
+class _VisibleTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def telegram_text_length(message: str) -> int:
+    """Count visible UTF-16 code units, matching Telegram's post-entity limits."""
+    parser = _VisibleTextParser()
+    parser.feed(message)
+    visible = "".join(parser.parts)
+    return len(visible.encode("utf-16-le")) // 2
 
 
 class TelegramSender:
@@ -68,8 +86,9 @@ class TelegramSender:
                     return SendResult(True, photo_message_id=photo_id)
             except requests.RequestException as exc:
                 logger.exception("telegram_photo_failed error=%s; falling_back_to_text", exc)
-        if len(message) > MESSAGE_LIMIT:
-            logger.error("telegram_text_failed reason=message_too_long chars=%s", len(message))
+        visible_length = telegram_text_length(message)
+        if visible_length > MESSAGE_LIMIT:
+            logger.error("telegram_text_failed reason=message_too_long visible_chars=%s", visible_length)
             return SendResult(False, photo_message_id=photo_id)
         payload: dict[str, object] = {
             "chat_id": self.channel_id,
@@ -104,4 +123,3 @@ class TelegramSender:
         except requests.RequestException as exc:
             logger.warning("review_notification_failed error=%s", exc)
             return False
-

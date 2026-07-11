@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from config.loader import load_yaml
-from processing.models import ExtractedNotice, NoticeCategory
+from processing.models import ExtractedNotice, NoticeCategory, NoticeSubtype
 
 
 FIELD_LABELS = {
@@ -42,6 +42,7 @@ URL_FIELDS = {
     "official_notification_url", "official_application_url", "official_information_url",
     "official_result_url", "official_notice_url", "official_routine_url",
 }
+NON_REPEATED_FIELDS = URL_FIELDS | {"action_required"}
 
 
 def _escape(value: object) -> str:
@@ -50,11 +51,23 @@ def _escape(value: object) -> str:
     return html.escape(str(value), quote=False)
 
 
+def _display(value: object, limit: int = 240) -> str:
+    if isinstance(value, list):
+        text = ", ".join(str(item) for item in value)
+    else:
+        text = str(value)
+    clean = " ".join(text.split())
+    if len(clean) > limit:
+        shortened = clean[: limit + 1].rsplit(" ", 1)[0] or clean[:limit]
+        clean = shortened.rstrip("।,;:- ") + "…"
+    return html.escape(clean, quote=False)
+
+
 def public_fields(extracted: ExtractedNotice, limit: int | None = None) -> list[tuple[str, object]]:
     values = [
         (name, field.value)
         for name, field in extracted.fields.items()
-        if field.value is not None and name not in URL_FIELDS
+        if field.value is not None and name not in NON_REPEATED_FIELDS
     ]
     return values[:limit] if limit else values
 
@@ -64,16 +77,16 @@ def format_telegram_message(extracted: ExtractedNotice, checked_at: datetime | N
     checked_at = checked_at or datetime.now(ZoneInfo("Asia/Kolkata"))
     lines = [
         f"{category_icon(extracted.category)} <b>{_escape(config['label'])}</b>",
-        "",
-        f"<b>{_escape(extracted.title_bn)}</b>",
-        "",
     ]
+    if extracted.subtype != NoticeSubtype.NEW:
+        lines.append(f"🔔 <b>{_escape(subtype_label(extracted.subtype))}</b>")
+    lines.extend(["", f"<b>{_display(extracted.title_bn, 300)}</b>", ""])
     for index, (name, value) in enumerate(public_fields(extracted)):
         label = FIELD_LABELS.get(name, name.replace("_", " ").title())
-        lines.append(f"{ICONS[index % len(ICONS)]} <b>{_escape(label)}:</b> {_escape(value)}")
+        lines.append(f"{ICONS[index % len(ICONS)]} <b>{_escape(label)}:</b> {_display(value)}")
     action = extracted.fields.get("action_required")
     if action and action.value:
-        lines.extend(["", f"👉 <b>করণীয়:</b> {_escape(action.value)}"])
+        lines.extend(["", f"👉 <b>করণীয়:</b> {_display(action.value, 350)}"])
     links = official_links(extracted)
     if links:
         lines.extend(["", "🔗 <b>অফিসিয়াল লিঙ্ক:</b>"])
@@ -117,3 +130,13 @@ def category_icon(category: NoticeCategory) -> str:
         NoticeCategory.EDUCATION_NOTICE: "📚", NoticeCategory.UNIVERSITY_NOTICE: "🏛️",
         NoticeCategory.GOVERNMENT_ANNOUNCEMENT: "📢",
     }[category]
+
+
+def subtype_label(subtype: NoticeSubtype) -> str:
+    return {
+        NoticeSubtype.NEW: "নতুন বিজ্ঞপ্তি",
+        NoticeSubtype.UPDATED: "আপডেটেড বিজ্ঞপ্তি",
+        NoticeSubtype.CORRIGENDUM: "সংশোধনী বিজ্ঞপ্তি",
+        NoticeSubtype.CANCELLED: "বাতিল বিজ্ঞপ্তি",
+        NoticeSubtype.DEADLINE_EXTENDED: "আবেদনের সময়সীমা বৃদ্ধি",
+    }[subtype]

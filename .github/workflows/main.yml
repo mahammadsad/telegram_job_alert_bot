@@ -46,6 +46,7 @@ jobs:
           fc-cache -f
 
       - name: Apply database migrations
+        if: ${{ inputs.dry_run != true }}
         run: python scripts/migrate.py
 
       - name: Run tests

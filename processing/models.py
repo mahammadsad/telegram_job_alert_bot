@@ -95,6 +95,7 @@ class OfficialDocument(BaseModel):
     text: str
     page_text: dict[int, str] = Field(default_factory=dict)
     extracted_links: list[str] = Field(default_factory=list)
+    redirect_chain: list[str] = Field(default_factory=list)
     scanned_pdf: bool = False
 
 
@@ -109,12 +110,11 @@ class PipelineNotice(BaseModel):
     official_document_url: str | None = None
     final_resolved_url: str | None = None
     final_domain: str | None = None
+    trusted_domain: bool = False
     content_sha256: str | None = None
     structured: ExtractedNotice | None = None
     verification_score: int = 0
     verification_status: VerificationStatus = VerificationStatus.DISCOVERED
     conflict_reason: str | None = None
     render_status: str | None = None
-    approved: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
-

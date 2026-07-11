@@ -13,17 +13,20 @@ from pydantic import ValidationError
 from database.db import NoticeRepository, connect
 from processing.classifier import classify
 from processing.deduplicator import is_changed_revision, same_notice
+from processing.extractor import GroqExtractor
 from processing.formatter import format_telegram_message
 from processing.models import (
     EligibilityScope,
     EvidenceValue,
     ExtractedNotice,
     NoticeCategory,
+    NoticeSubtype,
     PipelineNotice,
     VerificationStatus,
 )
 from processing.schemas import CATEGORY_FIELDS
 from processing.validators import (
+    detect_numeric_conflict,
     evidence_supported,
     valid_currency,
     valid_date,
@@ -39,6 +42,7 @@ from sources.html_source import HTMLSource
 from sources.pdf_source import extract_pdf
 from sources.rss_source import RSSSource
 from telegram.sender import CAPTION_LIMIT, TelegramSender, should_split_caption
+from telegram.sender import telegram_text_length
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -109,6 +113,18 @@ class QueueSession:
         return response(url, body=b'{"ok":true,"result":{"message_id":42}}', content_type="application/json")
 
 
+class GroqSession:
+    def __init__(self, contents):
+        self.contents = list(contents)
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        content = self.contents.pop(0)
+        body = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+        return response(url, body=body, content_type="application/json")
+
+
 def test_trusted_domain_validation():
     assert hostname_is_trusted("psc.wb.gov.in", TRUSTED)
     assert hostname_is_trusted("files.psc.wb.gov.in", TRUSTED)
@@ -140,6 +156,22 @@ def test_redirect_validation_rejects_unknown_target():
         SafeFetcher(TRUSTED, session=session).fetch("https://wb.gov.in/start")
 
 
+def test_discovery_redirect_is_rejected_before_unknown_host_is_contacted():
+    session = QueueSession([
+        response("https://www.karmasandhan.com/feed/", 302, location="https://evil.test/feed"),
+    ])
+    config = SourceConfig(
+        "Karmasandhan",
+        "https://www.karmasandhan.com/feed/",
+        "rss",
+        ["JOB"],
+        allowed_domains=("karmasandhan.com",),
+    )
+    with pytest.raises(ValueError, match="unapproved host"):
+        RSSSource(config, session=session).fetch()
+    assert [call[1] for call in session.calls] == ["https://www.karmasandhan.com/feed/"]
+
+
 def test_url_canonicalization():
     assert canonicalize_url("HTTPS://PSC.WB.GOV.IN/a/?utm_source=x&b=2") == "https://psc.wb.gov.in/a?b=2"
 
@@ -150,10 +182,25 @@ def test_rss_parsing():
     assert len(items) == 1 and items[0].candidate_official_links == ["https://psc.wb.gov.in/notice.pdf"]
 
 
+def test_rss_rejects_unapproved_discovery_item_url():
+    config = SourceConfig(
+        "Karmasandhan",
+        "https://www.karmasandhan.com/feed/",
+        "rss",
+        ["JOB"],
+        allowed_domains=("karmasandhan.com",),
+    )
+    payload = b"""<rss><channel><item><title>Trap</title>
+        <link>https://evil.test/phish</link><description>Notice</description>
+        </item></channel></rss>"""
+    assert RSSSource(config).parse(payload, config.url) == []
+
+
 def test_html_parsing_with_verified_selectors():
     config = SourceConfig(
         "Official", "https://wb.gov.in/notices", "html", ["ADMISSION"], official=True,
-        discovery_only=False, item_selector="article.notice", title_selector="h2", link_selector="a.details",
+        discovery_only=False, allowed_domains=("wb.gov.in",),
+        item_selector="article.notice", title_selector="h2", link_selector="a.details",
     )
     items = HTMLSource(config).parse((FIXTURES / "listing.html").read_bytes(), config.url)
     assert items[0].discovery_url == "https://wb.gov.in/notice/1"
@@ -185,6 +232,29 @@ def test_ai_json_enum_validation():
         ExtractedNotice.model_validate(data)
 
 
+def test_groq_json_mode_and_malformed_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("GROQ_API_KEY", "test-secret")
+    monkeypatch.setenv("GROQ_MAX_RETRIES", "2")
+    monkeypatch.setenv("GROQ_RETRY_BASE_DELAY", "0")
+    monkeypatch.setenv("GROQ_RATE_LIMIT_DELAY", "0")
+    conn = connect(tmp_path / "groq.db")
+    repo = NoticeRepository(conn)
+    valid = job_notice().model_dump_json()
+    session = GroqSession(["not-json", valid])
+    extracted = GroqExtractor(repo, session=session).extract(
+        "Clerk recruitment",
+        source_text(),
+        "https://psc.wb.gov.in/notice.pdf",
+        NoticeCategory.JOB,
+        ["https://psc.wb.gov.in/notice.pdf"],
+    )
+    assert extracted.category == NoticeCategory.JOB
+    assert len(session.calls) == 2
+    assert session.calls[-1][1]["json"]["response_format"] == {"type": "json_object"}
+    assert repo.get_usage("groq", "extract") == 2
+    conn.close()
+
+
 def test_unsupported_evidence_rejection():
     assert not evidence_supported("not present", source_text())
     result = validate_extraction(job_notice(valid=False), source_text(), TRUSTED)
@@ -192,17 +262,27 @@ def test_unsupported_evidence_rejection():
 
 
 def test_date_currency_and_vacancy_validation():
-    assert valid_date("31 July 2026") and not valid_date("soon")
+    assert valid_date("31 July 2026") and not valid_date("soon") and not valid_date("2026")
     assert valid_currency("₹3,000") and not valid_currency("many rupees")
     assert valid_vacancy("350 vacancies") and not valid_vacancy("unknown")
     assert valid_percentage("75%") and not valid_percentage("175%")
     assert valid_age_limit("18-30 years") and not valid_age_limit("180 years")
+    assert valid_date("৩১ জুলাই ২০২৬")
+    assert valid_currency("৩,০০০ টাকা")
 
 
 def test_conflicting_deadlines_require_review():
     text = source_text() + "\nLast date: 15.08.2026"
     result = validate_extraction(job_notice(), text, TRUSTED)
     assert not result.valid and result.conflicts == ["conflicting date: deadline"]
+
+
+def test_conflicting_labelled_vacancy_counts_require_review():
+    text = source_text() + "\nTotal vacancies: 350\nTotal vacancies: 400"
+    assert detect_numeric_conflict(text, "total_vacancies")
+    result = validate_extraction(job_notice(), text, TRUSTED)
+    assert not result.valid
+    assert "conflicting numeric value: total_vacancies" in result.conflicts
 
 
 def test_category_classification_is_controlled():
@@ -235,7 +315,105 @@ def test_changed_content_creates_revision(tmp_path):
     repo.save_verification(notice)
     notice.content_sha256 = "b"
     assert repo.save_verification(notice) == 2
+    assert notice.subtype == NoticeSubtype.UPDATED
     assert conn.execute("SELECT count(*) FROM notice_revisions").fetchone()[0] == 2
+    conn.close()
+
+
+def test_content_reversion_still_creates_a_new_revision(tmp_path):
+    conn = connect(tmp_path / "revision-reversion.db")
+    repo = NoticeRepository(conn)
+    notice = PipelineNotice(
+        category="JOB",
+        title="N",
+        discovery_url="https://x.test/reversion",
+        source_name="x",
+        content_sha256="a",
+        final_resolved_url="https://wb.gov.in/reversion",
+    )
+    notice.id = repo.upsert_discovered(notice)
+    assert repo.save_verification(notice) == 1
+    notice.content_sha256 = "b"
+    assert repo.save_verification(notice) == 2
+    notice.content_sha256 = "a"
+    assert repo.save_verification(notice) == 3
+    assert conn.execute("SELECT count(*) FROM notice_revisions").fetchone()[0] == 3
+    conn.close()
+
+
+def test_database_preserves_top_level_and_category_evidence(tmp_path):
+    conn = connect(tmp_path / "evidence.db")
+    repo = NoticeRepository(conn)
+    notice = PipelineNotice(
+        category="JOB",
+        title="Evidence",
+        discovery_url="https://x.test/evidence",
+        source_name="x",
+        structured=job_notice(),
+    )
+    notice.id = repo.upsert_discovered(notice)
+    repo.save_verification(notice)
+    stored = json.loads(
+        conn.execute("SELECT evidence_json FROM notices WHERE id=?", (notice.id,)).fetchone()[0]
+    )
+    assert stored["issuing_authority"]["evidence"] == "WBPSC"
+    assert stored["fields"]["deadline"]["evidence"] == "Last date: 31.07.2026"
+    conn.close()
+
+
+def test_unchanged_posted_revision_is_detected(tmp_path):
+    conn = connect(tmp_path / "posted.db")
+    repo = NoticeRepository(conn)
+    notice = PipelineNotice(
+        category="JOB",
+        title="N",
+        discovery_url="https://feed.test/n",
+        source_name="feed",
+        content_sha256="abc",
+        final_resolved_url="https://wb.gov.in/n/?utm_source=feed",
+        trusted_domain=True,
+    )
+    notice.id = repo.upsert_discovered(notice)
+    repo.save_verification(notice)
+    repo.mark_posted(notice.id, "1", "2")
+    row = repo.get_by_discovery_url(notice.discovery_url)
+    assert repo.is_same_posted_revision(row, "https://wb.gov.in/n", "abc")
+    assert not repo.is_same_posted_revision(row, "https://wb.gov.in/n", "changed")
+    conn.close()
+
+
+def test_review_approval_retains_candidate_links_for_next_run(tmp_path):
+    conn = connect(tmp_path / "review-retry.db")
+    repo = NoticeRepository(conn)
+    notice = PipelineNotice(
+        category="JOB",
+        title="Review me",
+        discovery_url="https://aggregator.test/n",
+        source_name="Aggregator",
+        metadata={
+            "summary": "Recruitment summary",
+            "candidate_official_links": ["https://psc.wb.gov.in/n.pdf"],
+            "official": False,
+            "discovery_only": True,
+        },
+    )
+    notice.id = repo.upsert_discovered(notice, "aggregator.test")
+    queue_id = repo.enqueue_review(notice.id, "needs review")
+    conn.execute("UPDATE review_queue SET status='APPROVED' WHERE id=?", (queue_id,))
+    conn.commit()
+    candidates = repo.review_candidates()
+    assert candidates[0]["candidate_official_links"] == ["https://psc.wb.gov.in/n.pdf"]
+    assert conn.execute("SELECT status FROM review_queue WHERE id=?", (queue_id,)).fetchone()[0] == "PROCESSING"
+    conn.close()
+
+
+def test_source_minimum_interval_is_persisted(tmp_path):
+    conn = connect(tmp_path / "source-check.db")
+    repo = NoticeRepository(conn)
+    assert repo.source_check_due("Fixture", 120)
+    repo.record_source_check("Fixture", "https://example.test/feed", "SUCCESS", "discovered=1")
+    assert not repo.source_check_due("Fixture", 120)
+    assert repo.source_check_due("Fixture", 0)
     conn.close()
 
 
@@ -246,6 +424,39 @@ def test_bengali_html_formatting_escapes_source_values():
     assert "&lt;script&gt;" in message and "অফিসিয়াল উৎস থেকে যাচাইকৃত" in message
     hashtags = [part for part in message.split() if part.startswith("#")]
     assert 2 <= len(hashtags) <= 4
+
+
+@pytest.mark.parametrize("category", list(NoticeCategory))
+def test_generated_messages_stay_within_telegram_limit(category):
+    values = {
+        name: field(
+            "https://wb.gov.in/notice.pdf" if name.endswith("_url") else "দীর্ঘ যাচাইকৃত তথ্য " * 80,
+            "দীর্ঘ যাচাইকৃত তথ্য",
+            url="https://wb.gov.in/notice.pdf",
+        )
+        for name in CATEGORY_FIELDS[category]
+    }
+    notice = ExtractedNotice(
+        category=category,
+        title_bn="খুব দীর্ঘ সরকারি বিজ্ঞপ্তির শিরোনাম " * 50,
+        issuing_authority=field(
+            "পশ্চিমবঙ্গ সরকার",
+            "পশ্চিমবঙ্গ সরকার",
+            url="https://wb.gov.in/notice.pdf",
+        ),
+        fields=values,
+        eligibility_scope=EligibilityScope.WEST_BENGAL if category == NoticeCategory.JOB else None,
+    )
+    assert telegram_text_length(format_telegram_message(notice)) <= 4096
+
+
+def test_updated_notice_is_visibly_labelled():
+    notice = job_notice()
+    notice.subtype = NoticeSubtype.UPDATED
+    message = format_telegram_message(notice)
+    markup = render_html(notice, VerificationStatus.VERIFIED_OFFICIAL)
+    assert "আপডেটেড বিজ্ঞপ্তি" in message
+    assert "সরকারি চাকরি • আপডেট" in markup
 
 
 def test_long_bengali_headline_wrapping_and_html_safety():
@@ -268,6 +479,55 @@ def test_png_generation_1080_square():
 def test_telegram_caption_length_handling():
     assert not should_split_caption("x" * CAPTION_LIMIT)
     assert should_split_caption("x" * (CAPTION_LIMIT + 1))
+    assert telegram_text_length("<b>abc</b>") == 3
+    assert not should_split_caption("<b>" + "x" * CAPTION_LIMIT + "</b>")
+
+
+def test_evidence_source_and_official_link_consistency():
+    notice = job_notice()
+    notice.fields["official_notification_url"] = field(
+        "https://psc.wb.gov.in/not-in-source.pdf",
+        "https://psc.wb.gov.in/notice.pdf",
+    )
+    result = validate_extraction(
+        notice,
+        source_text(),
+        TRUSTED,
+        official_source_url="https://psc.wb.gov.in/notice.pdf",
+    )
+    assert not result.valid
+    assert any("not present in source" in error for error in result.errors)
+
+    notice = job_notice()
+    notice.fields["deadline"].source_url = "https://wb.gov.in/different"
+    result = validate_extraction(
+        notice,
+        source_text(),
+        TRUSTED,
+        official_source_url="https://psc.wb.gov.in/notice.pdf",
+    )
+    assert any("invalid evidence source URL: deadline" == error for error in result.errors)
+
+
+def test_downloaded_official_pdf_url_is_self_authenticating_metadata():
+    notice = job_notice()
+    notice.fields["official_notification_url"] = EvidenceValue(
+        value="https://psc.wb.gov.in/notice.pdf",
+        evidence=None,
+        evidence_page=None,
+        source_url="https://psc.wb.gov.in/notice.pdf",
+    )
+    paged_text = "[PAGE 1]\n" + source_text().replace(
+        " https://psc.wb.gov.in/notice.pdf", ""
+    )
+    result = validate_extraction(
+        notice,
+        paged_text,
+        TRUSTED,
+        page_text={1: source_text()},
+        official_source_url="https://psc.wb.gov.in/notice.pdf",
+    )
+    assert result.valid
 
 
 def test_telegram_photo_failure_falls_back_to_text(monkeypatch):

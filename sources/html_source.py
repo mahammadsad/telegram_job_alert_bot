@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from processing.models import DiscoveredItem, NoticeCategory
-from sources.base import BaseSource
+from sources.base import BaseSource, source_url_is_allowed
 
 
 class HTMLSource(BaseSource):
@@ -23,6 +23,8 @@ class HTMLSource(BaseSource):
             if not title_node or not link_node or not link_node.get("href"):
                 continue
             link = urljoin(base_url, link_node["href"])
+            if not source_url_is_allowed(link, self.config.allowed_domains):
+                continue
             results.append(
                 DiscoveredItem(
                     title=title_node.get_text(" ", strip=True),
@@ -37,4 +39,3 @@ class HTMLSource(BaseSource):
                 )
             )
         return results
-
