@@ -8,7 +8,7 @@ import time
 import requests
 from pydantic import ValidationError
 
-from database.db import NoticeRepository
+from database.base import Repository
 from processing.models import ExtractedNotice, NoticeCategory
 from processing.schemas import CATEGORY_FIELDS
 
@@ -54,31 +54,43 @@ Rules:
 3. Every non-null critical value must have a short direct evidence excerpt and page number when page markers exist.
 4. Preserve raw official URLs. Never call a third-party/aggregator page official.
 5. Do not create claims from the headline when full source text is available.
-6. For JOB only, eligibility_scope must be ALL_INDIA, WEST_BENGAL, OTHER_STATE_ONLY, or UNCLEAR. For other categories use null.
-7. Include all required field names and no invented field names.
+6. For every category, eligibility_scope must use one controlled value: WEST_BENGAL_ONLY,
+   ALL_INDIA, OTHER_STATE_OPEN_TO_ALL, OTHER_STATE_DOMICILE_REQUIRED,
+   LOCAL_LANGUAGE_REQUIRED, INSTITUTION_SPECIFIC, DISTRICT_SPECIFIC,
+   ELIGIBILITY_UNCLEAR, or NOT_RELEVANT_TO_WEST_BENGAL.
+7. eligibility_reason must be a short direct excerpt proving the selected scope.
+   "Indian citizen" alone never proves ALL_INDIA eligibility.
+8. Include all required field names and no invented field names.
 """
 
 
 class GroqExtractor:
-    def __init__(self, repository: NoticeRepository, session: requests.Session | None = None):
+    def __init__(self, repository: Repository, session: requests.Session | None = None):
         self.repository = repository
         self.session = session or requests.Session()
-        self.model = os.getenv("GROQ_TEXT_MODEL", "llama-3.3-70b-versatile")
+        self.provider = os.getenv("AI_PROVIDER", "groq").strip().lower()
+        self.model = os.getenv("AI_TEXT_MODEL", os.getenv("GROQ_TEXT_MODEL", "")).strip() or (
+            "test-model" if session is not None else ""
+        )
         self.max_retries = int(os.getenv("GROQ_MAX_RETRIES", "3"))
         self.base_delay = float(os.getenv("GROQ_RETRY_BASE_DELAY", "20"))
         self.rate_delay = float(os.getenv("GROQ_RATE_LIMIT_DELAY", "3"))
-        self.daily_limit = int(os.getenv("GROQ_DAILY_TEXT_LIMIT", "1000"))
+        self.daily_limit = int(os.getenv("AI_DAILY_CALL_LIMIT", os.getenv("GROQ_DAILY_TEXT_LIMIT", "100")))
 
     def extract(self, title: str, text: str, source_url: str, category: NoticeCategory, links: list[str]) -> ExtractedNotice:
-        key = os.getenv("GROQ_API_KEY", "").strip()
+        key = os.getenv("AI_API_KEY", os.getenv("GROQ_API_KEY", "")).strip()
+        if self.provider != "groq":
+            raise RuntimeError(f"Unsupported AI_PROVIDER: {self.provider}; use groq or disable AI")
         if not key:
-            raise RuntimeError("GROQ_API_KEY is not configured")
+            raise RuntimeError("AI_API_KEY is not configured")
+        if not self.model:
+            raise RuntimeError("AI_TEXT_MODEL is not configured")
         prompt = build_prompt(title, text, source_url, category, links)
         last_error: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
-            if self.repository.get_usage("groq", "extract") >= self.daily_limit:
+            if self.repository.get_usage(self.provider, "extract") >= self.daily_limit:
                 raise RuntimeError("Groq daily text limit reached")
-            self.repository.increment_usage("groq", "extract")
+            self.repository.increment_usage(self.provider, "extract")
             try:
                 response = self.session.post(
                     ENDPOINT,

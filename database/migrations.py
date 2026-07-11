@@ -127,6 +127,87 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX idx_notice_revisions_hash
             ON notice_revisions(notice_id, content_sha256);
     """),
+    (4, """
+        ALTER TABLE notices ADD COLUMN title_bn TEXT;
+        ALTER TABLE notices ADD COLUMN title_en TEXT;
+        ALTER TABLE notices ADD COLUMN eligibility_status TEXT;
+        ALTER TABLE notices ADD COLUMN west_bengal_relevance TEXT NOT NULL DEFAULT 'LOW';
+        ALTER TABLE notices ADD COLUMN relevance_reason TEXT;
+        ALTER TABLE notices ADD COLUMN deadline_state TEXT NOT NULL DEFAULT 'UNKNOWN';
+        ALTER TABLE notices ADD COLUMN publication_priority TEXT NOT NULL DEFAULT 'NORMAL';
+        ALTER TABLE notices ADD COLUMN publication_status TEXT NOT NULL DEFAULT 'DRAFT';
+        ALTER TABLE notices ADD COLUMN eligibility_json TEXT;
+        CREATE INDEX IF NOT EXISTS idx_notices_category_status ON notices(category, publication_status);
+        CREATE INDEX IF NOT EXISTS idx_notices_deadline ON notices(deadline, deadline_state);
+        CREATE INDEX IF NOT EXISTS idx_notices_relevance ON notices(west_bengal_relevance);
+
+        CREATE TABLE IF NOT EXISTS sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
+            source_type TEXT NOT NULL, parser_type TEXT NOT NULL, base_url TEXT NOT NULL,
+            feed_url TEXT, official INTEGER NOT NULL DEFAULT 0, discovery_only INTEGER NOT NULL DEFAULT 1,
+            enabled INTEGER NOT NULL DEFAULT 0, categories_json TEXT NOT NULL DEFAULT '[]', state TEXT,
+            authority_type TEXT, allowed_domains_json TEXT NOT NULL DEFAULT '[]',
+            allowed_document_domains_json TEXT NOT NULL DEFAULT '[]', item_selector TEXT,
+            title_selector TEXT, link_selector TEXT, summary_selector TEXT, date_selector TEXT,
+            min_interval_minutes INTEGER NOT NULL DEFAULT 120, request_timeout INTEGER NOT NULL DEFAULT 20,
+            max_items INTEGER NOT NULL DEFAULT 20, robots_status TEXT, terms_reviewed INTEGER NOT NULL DEFAULT 0,
+            selector_verified_at TEXT, last_success_at TEXT, last_failure_at TEXT,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0, health_status TEXT NOT NULL DEFAULT 'UNKNOWN',
+            notes TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS notice_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, notice_id INTEGER NOT NULL REFERENCES notices(id),
+            field_name TEXT NOT NULL, extracted_value TEXT, evidence_text TEXT, page_number INTEGER,
+            source_url TEXT NOT NULL, validation_status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            ended_at TEXT, state TEXT NOT NULL DEFAULT 'RUNNING', sources_checked INTEGER NOT NULL DEFAULT 0,
+            items_discovered INTEGER NOT NULL DEFAULT 0, items_verified INTEGER NOT NULL DEFAULT 0,
+            items_posted INTEGER NOT NULL DEFAULT 0, items_rejected INTEGER NOT NULL DEFAULT 0,
+            items_queued INTEGER NOT NULL DEFAULT 0, duplicates INTEGER NOT NULL DEFAULT 0,
+            errors_json TEXT NOT NULL DEFAULT '[]', dry_run INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS telegram_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, notice_id INTEGER NOT NULL REFERENCES notices(id),
+            channel_id TEXT NOT NULL, photo_message_id TEXT, text_message_id TEXT,
+            delivery_state TEXT NOT NULL DEFAULT 'NOT_SENT', error TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(notice_id, channel_id)
+        );
+        CREATE TABLE IF NOT EXISTS profiles (
+            id TEXT PRIMARY KEY, email TEXT, role TEXT NOT NULL DEFAULT 'viewer',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, categories_json TEXT NOT NULL DEFAULT '[]',
+            relevance_json TEXT NOT NULL DEFAULT '[]', district TEXT, telegram_chat_id TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')), UNIQUE(user_id)
+        );
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, actor_id TEXT, action TEXT NOT NULL,
+            entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, reason TEXT NOT NULL,
+            changes_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """),
+    (5, """
+        ALTER TABLE review_queue ADD COLUMN corrected_official_url TEXT;
+        ALTER TABLE review_queue ADD COLUMN corrected_structured_data_json TEXT;
+        ALTER TABLE review_queue ADD COLUMN priority TEXT NOT NULL DEFAULT 'NORMAL';
+        ALTER TABLE review_queue ADD COLUMN assigned_reviewer TEXT;
+        ALTER TABLE review_queue ADD COLUMN resolved_at TEXT;
+    """),
+    (6, """
+        CREATE TABLE IF NOT EXISTS publication_digests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, digest_date TEXT NOT NULL UNIQUE,
+            notice_ids_json TEXT NOT NULL DEFAULT '[]', telegram_message_id TEXT,
+            delivery_state TEXT NOT NULL DEFAULT 'NOT_SENT', error TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """),
 ]
 
 

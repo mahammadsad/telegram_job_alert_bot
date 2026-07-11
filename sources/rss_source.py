@@ -3,12 +3,18 @@ from __future__ import annotations
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
+import requests
 
 from processing.models import DiscoveredItem, NoticeCategory
 from sources.base import BaseSource, source_url_is_allowed
+from sources.article_source import ArticleInspector
 
 
 class RSSSource(BaseSource):
+    def __init__(self, config, session=None, trusted_domains: set[str] | None = None):
+        super().__init__(config, session)
+        self.trusted_domains = trusted_domains or set(config.allowed_document_domains)
+
     def parse(self, content: bytes, base_url: str) -> list[DiscoveredItem]:
         soup = BeautifulSoup(content, "xml")
         results: list[DiscoveredItem] = []
@@ -54,3 +60,20 @@ class RSSSource(BaseSource):
                 )
             )
         return results
+
+    def discover(self) -> list[DiscoveredItem]:
+        items = super().discover()
+        if not self.config.article_inspection:
+            return items
+        inspector = ArticleInspector(self.config, self.trusted_domains, self.session)
+        enriched: list[DiscoveredItem] = []
+        for item in items:
+            try:
+                article_text, links = inspector.inspect(item.discovery_url)
+            except (ValueError, requests.RequestException):
+                article_text, links = "", []
+            enriched.append(item.model_copy(update={
+                "summary": article_text or item.summary,
+                "candidate_official_links": list(dict.fromkeys(item.candidate_official_links + links))[:10],
+            }))
+        return enriched

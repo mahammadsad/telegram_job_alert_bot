@@ -7,7 +7,7 @@ from pathlib import Path
 
 from database.migrations import run_migrations
 from processing.deduplicator import same_notice
-from processing.models import PipelineNotice, VerificationStatus
+from processing.models import PipelineNotice, TelegramDeliveryState, VerificationStatus
 from processing.verifier import canonicalize_url
 
 
@@ -36,6 +36,18 @@ class NoticeRepository:
             "SELECT * FROM notices WHERE discovery_url=? ORDER BY revision_number DESC LIMIT 1",
             (url,),
         ).fetchone()
+
+    def list_sources(self) -> list[dict]:
+        rows = self.conn.execute("SELECT * FROM sources ORDER BY name").fetchall()
+        results: list[dict] = []
+        for row in rows:
+            item = dict(row)
+            item["url"] = item.get("feed_url") or item.get("base_url")
+            item["categories"] = json.loads(item.pop("categories_json") or "[]")
+            item["allowed_domains"] = json.loads(item.pop("allowed_domains_json") or "[]")
+            item["allowed_document_domains"] = json.loads(item.pop("allowed_document_domains_json") or "[]")
+            results.append(item)
+        return results
 
     @staticmethod
     def is_legacy_posted(row: sqlite3.Row | None) -> bool:
@@ -155,6 +167,9 @@ class NoticeRepository:
                structured_data_json=?, evidence_json=?, verification_score=?,
                verification_status=?, conflict_reason=?, render_status=?, revision_number=?,
                issuing_authority=?, notice_number=?, notice_date=?, deadline=?,
+               title_bn=?, eligibility_status=?, west_bengal_relevance=?, relevance_reason=?,
+               deadline_state=?, publication_priority=?, eligibility_json=?,
+               publication_status=CASE WHEN ?='POSTED' THEN 'PUBLISHED' ELSE publication_status END,
                verified_at=CASE WHEN ?='VERIFIED_OFFICIAL' THEN datetime('now') ELSE verified_at END,
                last_checked_at=datetime('now') WHERE id=?""",
             (
@@ -178,6 +193,14 @@ class NoticeRepository:
                 _value(notice, "notice_number"),
                 _value(notice, "notice_date"),
                 _field_value(notice, "deadline"),
+                notice.structured.title_bn if notice.structured else None,
+                notice.structured.eligibility_scope.value if notice.structured and notice.structured.eligibility_scope else None,
+                notice.structured.west_bengal_relevance.value if notice.structured else "LOW",
+                notice.structured.relevance_reason if notice.structured else None,
+                notice.structured.deadline_state.value if notice.structured else "UNKNOWN",
+                notice.structured.publication_priority.value if notice.structured else "NORMAL",
+                json.dumps(_eligibility(notice), ensure_ascii=False) if notice.structured else None,
+                notice.verification_status.value,
                 notice.verification_status.value,
                 notice.id,
             ),
@@ -202,6 +225,27 @@ class NoticeRepository:
                     json.dumps(evidence, ensure_ascii=False) if evidence else None,
                 ),
             )
+        if notice.structured:
+            self.conn.execute("DELETE FROM notice_evidence WHERE notice_id=?", (notice.id,))
+            evidence_fields = {
+                "issuing_authority": notice.structured.issuing_authority,
+                "notice_number": notice.structured.notice_number,
+                "notice_date": notice.structured.notice_date,
+                **notice.structured.fields,
+            }
+            self.conn.executemany(
+                """INSERT INTO notice_evidence
+                   (notice_id,field_name,extracted_value,evidence_text,page_number,source_url,validation_status)
+                   VALUES (?,?,?,?,?,?,?)""",
+                [
+                    (
+                        notice.id, name, json.dumps(value.value, ensure_ascii=False), value.evidence,
+                        value.evidence_page, value.source_url or notice.final_resolved_url or "",
+                        "VALID" if notice.verification_status == VerificationStatus.VERIFIED_OFFICIAL else "PENDING",
+                    )
+                    for name, value in evidence_fields.items() if value.value is not None
+                ],
+            )
         self.conn.commit()
         return revision
 
@@ -220,7 +264,7 @@ class NoticeRepository:
     def mark_posted(self, notice_id: int, photo_id: str | None, text_id: str | None) -> None:
         self.conn.execute(
             """UPDATE notices SET verification_status='POSTED', posted_at=datetime('now'),
-               telegram_photo_message_id=?, telegram_text_message_id=? WHERE id=?""",
+               publication_status='PUBLISHED', telegram_photo_message_id=?, telegram_text_message_id=? WHERE id=?""",
             (photo_id, text_id, notice_id),
         )
         self.conn.execute(
@@ -230,13 +274,60 @@ class NoticeRepository:
         )
         self.conn.commit()
 
+    def mark_digest_ready(self, notice_id: int) -> None:
+        self.conn.execute(
+            """UPDATE notices SET publication_status='PUBLISHED',
+               verification_status='VERIFIED_OFFICIAL', last_checked_at=datetime('now') WHERE id=?""",
+            (notice_id,),
+        )
+        self.conn.commit()
+
+    def record_telegram_delivery(
+        self, notice_id: int, channel_id: str, state: TelegramDeliveryState,
+        photo_id: str | None = None, text_id: str | None = None, error: str | None = None,
+    ) -> None:
+        self.conn.execute(
+            """INSERT INTO telegram_posts
+               (notice_id,channel_id,photo_message_id,text_message_id,delivery_state,error)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(notice_id,channel_id) DO UPDATE SET
+                 photo_message_id=COALESCE(excluded.photo_message_id,telegram_posts.photo_message_id),
+                 text_message_id=COALESCE(excluded.text_message_id,telegram_posts.text_message_id),
+                 delivery_state=excluded.delivery_state,error=excluded.error,
+                 retry_count=CASE WHEN excluded.delivery_state IN ('FAILED','PARTIAL_FAILURE')
+                                  THEN telegram_posts.retry_count+1 ELSE telegram_posts.retry_count END,
+                 updated_at=datetime('now')""",
+            (notice_id, channel_id, photo_id, text_id, state.value, (error or "")[:2000]),
+        )
+        self.conn.commit()
+
+    def get_telegram_delivery(self, notice_id: int, channel_id: str) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM telegram_posts WHERE notice_id=? AND channel_id=?", (notice_id, channel_id)
+        ).fetchone()
+
+    def start_pipeline_run(self, dry_run: bool) -> int:
+        cursor = self.conn.execute("INSERT INTO pipeline_runs(dry_run) VALUES (?)", (int(dry_run),))
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def finish_pipeline_run(self, run_id: int, stats: dict[str, object], state: str = "COMPLETED") -> None:
+        self.conn.execute(
+            """UPDATE pipeline_runs SET ended_at=datetime('now'), state=?, sources_checked=?,
+               items_discovered=?, items_verified=?, items_posted=?, items_rejected=?, items_queued=?,
+               duplicates=?, errors_json=? WHERE id=?""",
+            (state, int(stats.get("sources_checked", 0)), int(stats.get("items_discovered", 0)),
+             int(stats.get("items_verified", 0)), int(stats.get("items_posted", 0)),
+             int(stats.get("items_rejected", 0)), int(stats.get("items_queued", 0)),
+             int(stats.get("duplicates", 0)), json.dumps(stats.get("errors", [])), run_id),
+        )
+        self.conn.commit()
+
     def review_candidates(self) -> list[dict]:
         rows = self.conn.execute(
-            """SELECT n.* FROM notices n
-               WHERE EXISTS (
-                   SELECT 1 FROM review_queue q WHERE q.notice_id=n.id
-                   AND q.status IN ('APPROVED','RETRY')
-               )
+            """SELECT n.*, q.corrected_official_url, q.corrected_structured_data_json
+               FROM notices n JOIN review_queue q ON q.notice_id=n.id
+               WHERE q.status IN ('APPROVED','RETRY')
                ORDER BY n.last_checked_at, n.id"""
         ).fetchall()
         candidates: list[dict] = []
@@ -253,9 +344,13 @@ class NoticeRepository:
                     "source_domain": row["source_domain"] or "",
                     "category_hints": [row["category"]],
                     "summary": row["discovery_summary"] or "",
-                    "candidate_official_links": links,
+                    "candidate_official_links": list(dict.fromkeys(
+                        ([row["corrected_official_url"]] if row["corrected_official_url"] else []) + links
+                    )),
                     "official": bool(row["source_official"]),
                     "discovery_only": bool(row["discovery_only"]),
+                    "corrected_structured_data": json.loads(row["corrected_structured_data_json"])
+                    if row["corrected_structured_data_json"] else None,
                 }
             )
         if rows:
@@ -284,6 +379,18 @@ class NoticeRepository:
             "INSERT INTO source_checks(source_name,source_url,status,detail) VALUES (?,?,?,?)",
             (source_name, source_url, status, detail[:2000]),
         )
+        if status == "SUCCESS":
+            self.conn.execute(
+                """UPDATE sources SET health_status='HEALTHY', consecutive_failures=0,
+                   last_success_at=datetime('now'), updated_at=datetime('now') WHERE name=?""",
+                (source_name,),
+            )
+        else:
+            self.conn.execute(
+                """UPDATE sources SET health_status='FAILING', consecutive_failures=consecutive_failures+1,
+                   last_failure_at=datetime('now'), updated_at=datetime('now') WHERE name=?""",
+                (source_name,),
+            )
         self.conn.commit()
 
     def increment_usage(self, provider: str, operation: str) -> int:
@@ -320,3 +427,16 @@ def _field_value(notice: PipelineNotice, name: str) -> str | None:
 
 def _json_or_none(value: object) -> str | None:
     return json.dumps(value, ensure_ascii=False) if value is not None else None
+
+
+def _eligibility(notice: PipelineNotice) -> dict[str, object]:
+    if not notice.structured:
+        return {}
+    data = notice.structured.model_dump(mode="json")
+    fields = {
+        "eligibility_scope", "eligibility_reason", "west_bengal_relevance", "relevance_reason",
+        "domicile_required", "domicile_state", "local_language_required", "required_language",
+        "citizenship_requirement", "eligible_states", "excluded_states", "work_location",
+        "application_scope", "institution_requirement", "district_requirement",
+    }
+    return {key: data.get(key) for key in fields}

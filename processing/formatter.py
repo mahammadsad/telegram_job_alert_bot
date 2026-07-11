@@ -36,13 +36,15 @@ FIELD_LABELS = {
     "issuing_department": "প্রকাশকারী বিভাগ", "announcement_subject": "ঘোষণার বিষয়",
     "affected_people": "যাঁদের জন্য", "effective_date": "কার্যকর হওয়ার তারিখ",
     "service_or_portal": "পরিষেবা/পোর্টাল",
+    "service_name": "পরিষেবার নাম", "service_location": "প্রযোজ্য স্থান",
+    "document_name": "নথির নাম", "change_summary": "কী পরিবর্তন হয়েছে",
 }
 ICONS = ["🏛️", "📌", "📅", "✅", "📝"]
 URL_FIELDS = {
     "official_notification_url", "official_application_url", "official_information_url",
     "official_result_url", "official_notice_url", "official_routine_url",
 }
-NON_REPEATED_FIELDS = URL_FIELDS | {"action_required"}
+NON_REPEATED_FIELDS = URL_FIELDS | {"action_required", "deadline"}
 
 
 def _escape(value: object) -> str:
@@ -84,6 +86,28 @@ def format_telegram_message(extracted: ExtractedNotice, checked_at: datetime | N
     for index, (name, value) in enumerate(public_fields(extracted)):
         label = FIELD_LABELS.get(name, name.replace("_", " ").title())
         lines.append(f"{ICONS[index % len(ICONS)]} <b>{_escape(label)}:</b> {_display(value)}")
+    scope_labels = {
+        "WEST_BENGAL_ONLY": "শুধু পশ্চিমবঙ্গ", "WEST_BENGAL": "পশ্চিমবঙ্গ",
+        "ALL_INDIA": "সর্বভারতীয়", "OTHER_STATE_OPEN_TO_ALL": "অন্য রাজ্য—সবার জন্য উন্মুক্ত",
+        "LOCAL_LANGUAGE_REQUIRED": "ভাষার শর্তসহ আবেদনযোগ্য",
+        "DISTRICT_SPECIFIC": "নির্দিষ্ট জেলা", "INSTITUTION_SPECIFIC": "নির্দিষ্ট প্রতিষ্ঠান",
+        "ELIGIBILITY_UNCLEAR": "যোগ্যতা অস্পষ্ট", "UNCLEAR": "যোগ্যতা অস্পষ্ট",
+    }
+    if extracted.eligibility_scope:
+        lines.append(
+            f"🌍 <b>আবেদনযোগ্যতা:</b> {_escape(scope_labels.get(extracted.eligibility_scope.value, extracted.eligibility_scope.value))}"
+        )
+    domicile = "প্রয়োজন" if extracted.domicile_required else "প্রয়োজন নেই" if extracted.domicile_required is False else "উল্লেখ নেই"
+    if extracted.domicile_state:
+        domicile += f" ({extracted.domicile_state})"
+    lines.append(f"🏠 <b>ডোমিসাইল:</b> {_escape(domicile)}")
+    if extracted.local_language_required:
+        lines.append(f"🗣️ <b>ভাষার শর্ত:</b> {_escape(extracted.required_language or 'অফিসিয়াল বিজ্ঞপ্তি দেখুন')}")
+    if extracted.work_location:
+        lines.append(f"📍 <b>প্রযোজ্য স্থান:</b> {_display(extracted.work_location)}")
+    deadline = extracted.fields.get("deadline")
+    deadline_text = deadline.value if deadline and deadline.value else "প্রযোজ্য নয় / অফিসিয়াল নোটিশ দেখুন"
+    lines.append(f"📅 <b>শেষ তারিখ:</b> {_display(deadline_text)}")
     action = extracted.fields.get("action_required")
     if action and action.value:
         lines.extend(["", f"👉 <b>করণীয়:</b> {_display(action.value, 350)}"])
@@ -129,6 +153,7 @@ def category_icon(category: NoticeCategory) -> str:
         NoticeCategory.RESULT: "📋", NoticeCategory.EXAMINATION: "🗓️",
         NoticeCategory.EDUCATION_NOTICE: "📚", NoticeCategory.UNIVERSITY_NOTICE: "🏛️",
         NoticeCategory.GOVERNMENT_ANNOUNCEMENT: "📢",
+        NoticeCategory.GOVERNMENT_SERVICE: "🏢", NoticeCategory.DOCUMENT_UPDATE: "📄",
     }[category]
 
 
@@ -139,4 +164,7 @@ def subtype_label(subtype: NoticeSubtype) -> str:
         NoticeSubtype.CORRIGENDUM: "সংশোধনী বিজ্ঞপ্তি",
         NoticeSubtype.CANCELLED: "বাতিল বিজ্ঞপ্তি",
         NoticeSubtype.DEADLINE_EXTENDED: "আবেদনের সময়সীমা বৃদ্ধি",
+        NoticeSubtype.DEADLINE_REMINDER: "শেষ তারিখের স্মরণিকা",
+        NoticeSubtype.RESULT_PUBLISHED: "ফলাফল প্রকাশিত",
+        NoticeSubtype.ADMIT_CARD_RELEASED: "অ্যাডমিট কার্ড প্রকাশিত",
     }[subtype]

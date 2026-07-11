@@ -11,5 +11,6 @@ STYLES = {
     NoticeCategory.EDUCATION_NOTICE: ("#167cad", "#73c8ea", "📚"),
     NoticeCategory.UNIVERSITY_NOTICE: ("#153a62", "#499bc7", "🏛️"),
     NoticeCategory.GOVERNMENT_ANNOUNCEMENT: ("#183957", "#50758e", "📢"),
+    NoticeCategory.GOVERNMENT_SERVICE: ("#075985", "#0e7490", "🏢"),
+    NoticeCategory.DOCUMENT_UPDATE: ("#334155", "#0369a1", "📄"),
 }
-

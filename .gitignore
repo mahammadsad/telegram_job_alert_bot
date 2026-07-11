@@ -6,3 +6,9 @@ __pycache__/
 *.py[cod]
 /dry_run_output/
 /render_samples/
+jobs.db
+web/node_modules/
+web/dist/
+web/.env*
+!web/.env.example
+web/*.tsbuildinfo

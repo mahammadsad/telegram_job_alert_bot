@@ -267,11 +267,14 @@ def validate_extraction(
             conflicts.append(f"conflicting date: {name}")
         if detect_numeric_conflict(source_text, name):
             conflicts.append(f"conflicting numeric value: {name}")
-    if notice.category == NoticeCategory.JOB and notice.eligibility_scope not in {
+    if notice.eligibility_scope not in {
         EligibilityScope.ALL_INDIA,
+        EligibilityScope.WEST_BENGAL_ONLY,
         EligibilityScope.WEST_BENGAL,
+        EligibilityScope.OTHER_STATE_OPEN_TO_ALL,
+        EligibilityScope.LOCAL_LANGUAGE_REQUIRED,
     }:
-        errors.append(f"job eligibility is {notice.eligibility_scope or 'UNCLEAR'}")
+        errors.append(f"notice eligibility is {notice.eligibility_scope or 'UNCLEAR'}")
     if verified_critical:
         score += 15
     if conflicts:

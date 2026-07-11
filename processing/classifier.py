@@ -11,6 +11,8 @@ KEYWORDS: dict[NoticeCategory, tuple[str, ...]] = {
     NoticeCategory.WELFARE_SCHEME: ("scheme", "benefit", "প্রকল্প"),
     NoticeCategory.UNIVERSITY_NOTICE: ("university", "বিশ্ববিদ্যাল"),
     NoticeCategory.EDUCATION_NOTICE: ("education", "student", "শিক্ষা"),
+    NoticeCategory.DOCUMENT_UPDATE: ("certificate", "document update", "নথি", "সার্টিফিকেট"),
+    NoticeCategory.GOVERNMENT_SERVICE: ("government service", "public service", "পরিষেবা"),
     NoticeCategory.JOB: ("recruitment", "vacancy", "post", "চাকরি"),
 }
 
@@ -23,4 +25,3 @@ def classify(title: str, text: str = "", hints: list[NoticeCategory] | None = No
     if hints:
         return hints[0]
     return NoticeCategory.GOVERNMENT_ANNOUNCEMENT
-

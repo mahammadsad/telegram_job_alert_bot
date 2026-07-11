@@ -13,4 +13,10 @@ trusted_domains:
   - nta.ac.in
   - upsc.gov.in
   - ssc.gov.in
-
+  - indiapost.gov.in
+  - ibps.in
+  - indianrailways.gov.in
+  - rrbcdg.gov.in
+  - apprenticeshipindia.gov.in
+  - ncs.gov.in
+  - ugc.gov.in

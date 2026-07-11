@@ -48,6 +48,16 @@ CATEGORY_FIELDS: dict[NoticeCategory, list[str]] = {
         "issuing_department", "announcement_subject", "affected_people", "effective_date",
         "action_required", "required_documents", "service_or_portal", "official_notice_url",
     ],
+    NoticeCategory.GOVERNMENT_SERVICE: [
+        "service_name", "department", "eligibility", "required_documents",
+        "application_method", "deadline", "service_location",
+        "official_information_url", "official_application_url",
+    ],
+    NoticeCategory.DOCUMENT_UPDATE: [
+        "document_name", "issuing_department", "affected_people", "change_summary",
+        "effective_date", "deadline", "action_required", "required_documents",
+        "official_notice_url", "official_application_url",
+    ],
 }
 
 
@@ -61,6 +71,8 @@ REQUIRED_FIELDS: dict[NoticeCategory, set[str]] = {
     NoticeCategory.EDUCATION_NOTICE: {"institution", "notice_subject", "affected_students", "official_notice_url"},
     NoticeCategory.UNIVERSITY_NOTICE: {"institution", "notice_subject", "affected_students", "official_notice_url"},
     NoticeCategory.GOVERNMENT_ANNOUNCEMENT: {"issuing_department", "announcement_subject", "affected_people", "official_notice_url"},
+    NoticeCategory.GOVERNMENT_SERVICE: {"service_name", "department", "eligibility", "official_information_url"},
+    NoticeCategory.DOCUMENT_UPDATE: {"document_name", "issuing_department", "change_summary", "official_notice_url"},
 }
 
 
@@ -69,4 +81,3 @@ CRITICAL_NAME_PARTS = ("date", "deadline", "vacanc", "amount", "salary", "age", 
 
 def is_critical(field_name: str) -> bool:
     return any(part in field_name for part in CRITICAL_NAME_PARTS)
-

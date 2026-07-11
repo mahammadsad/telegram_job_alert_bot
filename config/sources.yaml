@@ -5,9 +5,12 @@ sources:
     categories: [JOB]
     official: false
     discovery_only: true
-    enabled: true
+    enabled: false
     allowed_domains: [karmasandhan.com]
-    allowed_document_domains: []
+    allowed_document_domains: [psc.wb.gov.in, prb.wb.gov.in, ssc.gov.in, upsc.gov.in]
+    terms_reviewed: false
+    article_inspection: false
+    notes: "Disabled until robots.txt and terms are manually reviewed. Then enable full-article inspection."
     min_interval_minutes: 120
     request_timeout: 20
     max_items: 20
@@ -69,3 +72,57 @@ sources:
     parser_note: "Verify notice-list selectors before enabling."
     allowed_domains: [wbjeeb.nic.in]
 
+  - name: Union Public Service Commission
+    url: https://upsc.gov.in/
+    parser_type: html
+    categories: [JOB, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Disabled until current listing selectors, robots and terms are reviewed."
+    allowed_domains: [upsc.gov.in]
+  - name: Staff Selection Commission
+    url: https://ssc.gov.in/
+    parser_type: html
+    categories: [JOB, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Disabled until current listing selectors, robots and terms are reviewed."
+    allowed_domains: [ssc.gov.in]
+  - name: National Testing Agency
+    url: https://nta.ac.in/
+    parser_type: html
+    categories: [ADMISSION, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Disabled until current listing selectors, robots and terms are reviewed."
+    allowed_domains: [nta.ac.in]
+  - name: National Scholarship Portal
+    url: https://scholarships.gov.in/
+    parser_type: html
+    categories: [SCHOLARSHIP]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Portal is listed for manual discovery until a stable public notice listing is verified."
+    allowed_domains: [scholarships.gov.in]
+  - name: India Post
+    url: https://www.indiapost.gov.in/
+    parser_type: html
+    categories: [JOB, GOVERNMENT_SERVICE]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Disabled until current listing selectors, robots and terms are reviewed."
+    allowed_domains: [indiapost.gov.in]
+  - name: IBPS
+    url: https://www.ibps.in/
+    parser_type: html
+    categories: [JOB, EXAMINATION, RESULT]
+    official: true
+    discovery_only: false
+    enabled: false
+    parser_note: "Disabled until current listing selectors, robots and terms are reviewed."
+    allowed_domains: [ibps.in]

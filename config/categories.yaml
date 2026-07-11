@@ -26,4 +26,9 @@ categories:
   GOVERNMENT_ANNOUNCEMENT:
     label: "সরকারি ঘোষণা"
     hashtags: ["#সরকারি_ঘোষণা", "#PublicService"]
-
+  GOVERNMENT_SERVICE:
+    label: "সরকারি পরিষেবা"
+    hashtags: ["#সরকারি_পরিষেবা", "#WestBengal"]
+  DOCUMENT_UPDATE:
+    label: "নথি সংক্রান্ত আপডেট"
+    hashtags: ["#নথি_আপডেট", "#PublicService"]

@@ -1,0 +1,24 @@
+{
+  "name": "sarkari-tathya-kendra-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {"dev":"vite","prebuild":"node scripts/generate-sitemap.mjs","build":"tsc --noEmit -p tsconfig.app.json && vite build","test":"vitest run","preview":"vite preview"},
+  "dependencies": {
+    "@supabase/supabase-js": "^2.52.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "jsdom": "^26.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.0",
+    "vitest": "^3.2.0"
+  }
+}

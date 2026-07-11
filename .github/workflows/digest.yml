@@ -1,0 +1,22 @@
+name: Daily Bengali Digest
+on:
+  schedule: [{cron: "30 14 * * *"}]
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency: {group: telegram-digest, cancel-in-progress: false}
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - run: python scripts/daily_digest.py
+        env:
+          DAILY_DIGEST_ENABLED: ${{ vars.DAILY_DIGEST_ENABLED || 'false' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          PUBLIC_WEBSITE_URL: ${{ vars.PUBLIC_WEBSITE_URL }}

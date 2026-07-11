@@ -54,9 +54,30 @@ class SourceConfig:
     item_selector: str | None = None
     title_selector: str | None = None
     link_selector: str | None = None
+    summary_selector: str | None = None
+    date_selector: str | None = None
+    source_type: str = "RSS"
+    slug: str = ""
+    base_url: str | None = None
+    feed_url: str | None = None
+    state: str | None = None
+    authority_type: str | None = None
+    robots_status: str | None = None
+    terms_reviewed: bool = False
+    selector_verified_at: str | None = None
+    notes: str | None = None
+    article_inspection: bool = False
+    json_items_path: str | None = None
+    max_response_bytes: int = 2 * 1024 * 1024
 
     @classmethod
     def from_dict(cls, data: dict) -> "SourceConfig":
+        data = dict(data)
+        data.setdefault("url", data.get("feed_url") or data.get("base_url"))
+        if data.get("parser_type"):
+            data["parser_type"] = str(data["parser_type"]).lower()
+        if data.get("source_type"):
+            data["source_type"] = str(data["source_type"]).upper()
         allowed = {field.name for field in cls.__dataclass_fields__.values()}
         clean = {key: value for key, value in data.items() if key in allowed}
         clean["allowed_domains"] = tuple(
@@ -93,7 +114,7 @@ class BaseSource(ABC):
             parser.parse(response.text.splitlines())
             return parser.can_fetch(USER_AGENT, self.config.url)
         except requests.RequestException:
-            return True
+            return False
 
     def fetch(self) -> requests.Response:
         current = self.config.url
@@ -112,6 +133,14 @@ class BaseSource(ABC):
                 current = urljoin(current, location)
                 continue
             response.raise_for_status()
+            declared = response.headers.get("Content-Length")
+            if declared and int(declared) > self.config.max_response_bytes:
+                raise ValueError(f"source response exceeds {self.config.max_response_bytes} bytes")
+            if len(response.content) > self.config.max_response_bytes:
+                raise ValueError(f"source response exceeds {self.config.max_response_bytes} bytes")
+            content_type = response.headers.get("Content-Type", "").lower()
+            if content_type and not any(kind in content_type for kind in ("html", "xml", "json", "text")):
+                raise ValueError(f"unsupported source content type: {content_type}")
             if not source_url_is_allowed(response.url, self.config.allowed_domains):
                 raise ValueError(f"source returned an unapproved final URL: {response.url}")
             return response

@@ -16,6 +16,8 @@ class NoticeCategory(str, Enum):
     EDUCATION_NOTICE = "EDUCATION_NOTICE"
     UNIVERSITY_NOTICE = "UNIVERSITY_NOTICE"
     GOVERNMENT_ANNOUNCEMENT = "GOVERNMENT_ANNOUNCEMENT"
+    GOVERNMENT_SERVICE = "GOVERNMENT_SERVICE"
+    DOCUMENT_UPDATE = "DOCUMENT_UPDATE"
 
 
 class NoticeSubtype(str, Enum):
@@ -24,6 +26,9 @@ class NoticeSubtype(str, Enum):
     CORRIGENDUM = "CORRIGENDUM"
     CANCELLED = "CANCELLED"
     DEADLINE_EXTENDED = "DEADLINE_EXTENDED"
+    DEADLINE_REMINDER = "DEADLINE_REMINDER"
+    RESULT_PUBLISHED = "RESULT_PUBLISHED"
+    ADMIT_CARD_RELEASED = "ADMIT_CARD_RELEASED"
 
 
 class VerificationStatus(str, Enum):
@@ -42,10 +47,60 @@ class VerificationStatus(str, Enum):
 
 
 class EligibilityScope(str, Enum):
+    WEST_BENGAL_ONLY = "WEST_BENGAL_ONLY"
     ALL_INDIA = "ALL_INDIA"
+    OTHER_STATE_OPEN_TO_ALL = "OTHER_STATE_OPEN_TO_ALL"
+    OTHER_STATE_DOMICILE_REQUIRED = "OTHER_STATE_DOMICILE_REQUIRED"
+    LOCAL_LANGUAGE_REQUIRED = "LOCAL_LANGUAGE_REQUIRED"
+    INSTITUTION_SPECIFIC = "INSTITUTION_SPECIFIC"
+    DISTRICT_SPECIFIC = "DISTRICT_SPECIFIC"
+    ELIGIBILITY_UNCLEAR = "ELIGIBILITY_UNCLEAR"
+    NOT_RELEVANT_TO_WEST_BENGAL = "NOT_RELEVANT_TO_WEST_BENGAL"
+    # Legacy values remain readable during the SQLite/Supabase transition.
     WEST_BENGAL = "WEST_BENGAL"
     OTHER_STATE_ONLY = "OTHER_STATE_ONLY"
     UNCLEAR = "UNCLEAR"
+
+
+class RelevanceLevel(str, Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    REJECT = "REJECT"
+
+
+class DeadlineState(str, Enum):
+    OPEN = "OPEN"
+    CLOSING_SOON = "CLOSING_SOON"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+    UNKNOWN = "UNKNOWN"
+
+
+class PublicationPriority(str, Enum):
+    URGENT = "URGENT"
+    HIGH = "HIGH"
+    NORMAL = "NORMAL"
+    DIGEST_ONLY = "DIGEST_ONLY"
+    REJECT = "REJECT"
+
+
+class TelegramDeliveryState(str, Enum):
+    NOT_SENT = "NOT_SENT"
+    PHOTO_SENT = "PHOTO_SENT"
+    TEXT_SENT = "TEXT_SENT"
+    FULLY_SENT = "FULLY_SENT"
+    PARTIAL_FAILURE = "PARTIAL_FAILURE"
+    FAILED = "FAILED"
+
+
+class SourceType(str, Enum):
+    RSS = "RSS"
+    HTML = "HTML"
+    JSON_API = "JSON_API"
+    OFFICIAL_PDF_LIST = "OFFICIAL_PDF_LIST"
+    SITEMAP = "SITEMAP"
+    MANUAL = "MANUAL"
 
 
 class EvidenceValue(BaseModel):
@@ -72,6 +127,21 @@ class ExtractedNotice(BaseModel):
     fields: dict[str, EvidenceValue]
     eligibility_scope: EligibilityScope | None = None
     eligibility_reason: str | None = None
+    west_bengal_relevance: RelevanceLevel = RelevanceLevel.LOW
+    relevance_reason: str | None = None
+    domicile_required: bool | None = None
+    domicile_state: str | None = None
+    local_language_required: bool | None = None
+    required_language: str | None = None
+    citizenship_requirement: str | None = None
+    eligible_states: list[str] = Field(default_factory=list)
+    excluded_states: list[str] = Field(default_factory=list)
+    work_location: str | None = None
+    application_scope: str | None = None
+    institution_requirement: str | None = None
+    district_requirement: str | None = None
+    deadline_state: DeadlineState = DeadlineState.UNKNOWN
+    publication_priority: PublicationPriority = PublicationPriority.NORMAL
 
 
 class DiscoveredItem(BaseModel):
@@ -84,6 +154,7 @@ class DiscoveredItem(BaseModel):
     candidate_official_links: list[str] = Field(default_factory=list)
     official: bool = False
     discovery_only: bool = True
+    corrected_structured_data: dict[str, Any] | None = None
 
 
 class OfficialDocument(BaseModel):

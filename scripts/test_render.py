@@ -23,6 +23,8 @@ TITLES = {
     NoticeCategory.EDUCATION_NOTICE: "শিক্ষার্থীদের জন্য গুরুত্বপূর্ণ শিক্ষা নোটিশ",
     NoticeCategory.UNIVERSITY_NOTICE: "বিশ্ববিদ্যালয়ের সেমেস্টার সংক্রান্ত জরুরি নোটিশ",
     NoticeCategory.GOVERNMENT_ANNOUNCEMENT: "জনসাধারণের জন্য গুরুত্বপূর্ণ সরকারি ঘোষণা",
+    NoticeCategory.GOVERNMENT_SERVICE: "সরকারি পরিষেবায় আবেদন সংক্রান্ত তথ্য",
+    NoticeCategory.DOCUMENT_UPDATE: "সরকারি নথির নিয়ম পরিবর্তন সংক্রান্ত তথ্য",
 }
 
 
