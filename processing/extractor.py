@@ -61,6 +61,10 @@ Rules:
 7. eligibility_reason must be a short direct excerpt proving the selected scope.
    "Indian citizen" alone never proves ALL_INDIA eligibility.
 8. Include all required field names and no invented field names.
+9. title_bn is mandatory and must be a non-empty, faithful Bengali title; it can never be null.
+10. For the category's official notice/information URL field, use Source URL itself.
+    Set insecure http:// links and any unverified application URL to null. Never upgrade,
+    rewrite, or guess a URL.
 """
 
 
@@ -92,6 +96,13 @@ class GroqExtractor:
                 raise RuntimeError("Groq daily text limit reached")
             self.repository.increment_usage(self.provider, "extract")
             try:
+                attempt_prompt = prompt
+                if last_error is not None:
+                    attempt_prompt += (
+                        "\nYour previous response failed schema validation:\n"
+                        f"{str(last_error)[:1200]}\n"
+                        "Return a corrected complete JSON object. Do not repeat that error."
+                    )
                 response = self.session.post(
                     ENDPOINT,
                     headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
@@ -99,7 +110,7 @@ class GroqExtractor:
                         "model": self.model,
                         "messages": [
                             {"role": "system", "content": "Return one valid JSON object. Extract facts only."},
-                            {"role": "user", "content": prompt},
+                            {"role": "user", "content": attempt_prompt},
                         ],
                         "temperature": 0,
                         "max_completion_tokens": 4000,

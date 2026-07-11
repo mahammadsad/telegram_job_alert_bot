@@ -303,6 +303,8 @@ def test_groq_json_mode_and_malformed_retry(monkeypatch, tmp_path):
     assert extracted.category == NoticeCategory.JOB
     assert len(session.calls) == 2
     assert session.calls[-1][1]["json"]["response_format"] == {"type": "json_object"}
+    repair_prompt = session.calls[-1][1]["json"]["messages"][-1]["content"]
+    assert "previous response failed schema validation" in repair_prompt.lower()
     assert repo.get_usage("groq", "extract") == 2
     conn.close()
 
@@ -563,11 +565,16 @@ def test_evidence_source_and_official_link_consistency():
 
 def test_downloaded_official_pdf_url_is_self_authenticating_metadata():
     notice = job_notice()
+    official_url = "https://psc.wb.gov.in/notice-2026-07.pdf"
+    for metadata_field in (notice.issuing_authority, notice.notice_number, notice.notice_date):
+        metadata_field.source_url = official_url
+    for field_value in notice.fields.values():
+        field_value.source_url = official_url
     notice.fields["official_notification_url"] = EvidenceValue(
-        value="https://psc.wb.gov.in/notice.pdf",
+        value=official_url,
         evidence=None,
         evidence_page=None,
-        source_url="https://psc.wb.gov.in/notice.pdf",
+        source_url=official_url,
     )
     paged_text = "[PAGE 1]\n" + source_text().replace(
         " https://psc.wb.gov.in/notice.pdf", ""
@@ -577,7 +584,7 @@ def test_downloaded_official_pdf_url_is_self_authenticating_metadata():
         paged_text,
         TRUSTED,
         page_text={1: source_text()},
-        official_source_url="https://psc.wb.gov.in/notice.pdf",
+        official_source_url=official_url,
     )
     assert result.valid
 

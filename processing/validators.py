@@ -242,7 +242,9 @@ def validate_extraction(
         if not direct_source_link and not evidence_supported(field.evidence, evidence_source):
             errors.append(f"unsupported evidence: {name}")
         if is_critical(name):
-            if not value_supported(field.value, source_text):
+            if direct_source_link:
+                verified_critical += 1
+            elif not value_supported(field.value, source_text):
                 errors.append(f"unsupported value: {name}")
             else:
                 verified_critical += 1
