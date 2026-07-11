@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
-Disallow: /admin
-Sitemap: /sitemap.xml
+Disallow: /telegram_job_alert_bot/admin
+Sitemap: https://mahammadsad.github.io/telegram_job_alert_bot/sitemap.xml

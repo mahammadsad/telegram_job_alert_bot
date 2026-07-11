@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": {"dev":"vite","prebuild":"node scripts/generate-sitemap.mjs","build":"tsc --noEmit -p tsconfig.app.json && vite build","test":"vitest run","preview":"vite preview"},
+  "scripts": {"dev":"vite","prebuild":"node scripts/generate-sitemap.mjs","build":"tsc --noEmit -p tsconfig.app.json && vite build","postbuild":"node scripts/copy-404.mjs","test":"vitest run","preview":"vite preview"},
   "dependencies": {
     "@supabase/supabase-js": "^2.52.0",
     "react": "^19.1.0",

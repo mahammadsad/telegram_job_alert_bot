@@ -3,7 +3,7 @@
 বাংলায় West Bengal-কেন্দ্রিক সরকারি চাকরি, ভর্তি, স্কলারশিপ, পরীক্ষা, প্রকল্প,
 পরিষেবা ও গুরুত্বপূর্ণ ঘোষণার free, official-source-verified platform। এটি GitHub
 Actions-এ discovery/verification চালায়, Supabase Free-তে data ও admin auth রাখে,
-Cloudflare Pages-এ React website দেখায় এবং Telegram Bot API-তে alert পাঠায়।
+GitHub Pages-এ React website দেখায় এবং Telegram Bot API-তে alert পাঠায়।
 
 ## নিরাপত্তার মূল নিয়ম
 
@@ -44,7 +44,7 @@ DATABASE_BACKEND=sqlite DRY_RUN=true AUTO_POST_ENABLED=false python app.py
 
 Start with [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md). The important deployment
 guides are [Supabase](docs/SUPABASE_SETUP.md), [GitHub Actions](docs/GITHUB_ACTIONS_SETUP.md),
-[Cloudflare Pages](docs/CLOUDFLARE_PAGES_SETUP.md), and [Telegram](docs/TELEGRAM_SETUP.md).
+[GitHub Pages](docs/GITHUB_PAGES_SETUP.md), and [Telegram](docs/TELEGRAM_SETUP.md).
 
 ## Intentionally disabled sources
 

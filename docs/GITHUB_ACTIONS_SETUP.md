@@ -10,7 +10,6 @@ Under **Secrets**, click **New repository secret** for each:
 - `TELEGRAM_CHANNEL_ID`
 - `TELEGRAM_REVIEW_CHAT_ID` (private admin chat; optional)
 - `AI_API_KEY` (optional Groq free-tier key)
-- `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (only for action-based deploy)
 
 Under **Variables**, add:
 
@@ -20,16 +19,15 @@ Under **Variables**, add:
 - `AUTO_POST_ENABLED=true`
 - `DAILY_DIGEST_ENABLED=false` (change to `true` after testing the digest workflow)
 - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-- `VITE_TELEGRAM_CHANNEL_URL`, `CLOUDFLARE_PAGES_PROJECT`
+- `VITE_TELEGRAM_CHANNEL_URL`
 
-`PUBLIC_WEBSITE_URL` is **not required for the first setup**. Leave it absent or blank
-until Cloudflare completes the first deployment and shows your free `pages.dev` URL.
-Then create `PUBLIC_WEBSITE_URL` with that complete URL, for example
-`https://your-project.pages.dev`, and run the website workflow again. The same variable
-is used for Telegram website buttons, digest links, and the production sitemap.
+Set `PUBLIC_WEBSITE_URL` to the predictable GitHub Pages address:
 
-Without `PUBLIC_WEBSITE_URL`, the core pipeline still works. Telegram posts simply omit
-the website-details button, and the digest omits its website link.
+```text
+https://mahammadsad.github.io/telegram_job_alert_bot
+```
+
+It is used for Telegram website buttons, digest links, and the production sitemap.
 
 Run **Actions → Government Information Pipeline → Run workflow** with dry run first.
 The production concurrency group prevents overlapping publish runs. `jobs.db` is

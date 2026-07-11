@@ -1,34 +1,66 @@
-name: Website Tests and Cloudflare Pages
+name: Website Tests and GitHub Pages
+
 on:
-  push: {branches: [main], paths: ['web/**', '.github/workflows/web.yml']}
-  pull_request: {paths: ['web/**']}
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/web.yml']
+  pull_request:
+    paths: ['web/**', '.github/workflows/web.yml']
   workflow_dispatch:
-permissions: {contents: read}
-concurrency: {group: "website-${{ github.ref }}", cancel-in-progress: true}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "github-pages-${{ github.ref }}"
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-    defaults: {run: {working-directory: web}}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: {node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json}
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
       - run: npm run build
         env:
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_PUBLIC_WEBSITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
-          VITE_PUBLIC_WEBSITE_URL: ${{ vars.PUBLIC_WEBSITE_URL }}
           VITE_TELEGRAM_CHANNEL_URL: ${{ vars.VITE_TELEGRAM_CHANNEL_URL }}
-      - uses: actions/upload-artifact@v4
-        with: {name: website-dist, path: web/dist, retention-days: 7}
-      - name: Deploy to Cloudflare Pages
-        if: ${{ github.event_name != 'pull_request' && env.CLOUDFLARE_API_TOKEN != '' }}
-        uses: cloudflare/wrangler-action@v3
+      - name: Configure GitHub Pages
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/configure-pages@v5
+      - name: Upload GitHub Pages artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-pages-artifact@v4
         with:
-          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy web/dist --project-name=${{ vars.CLOUDFLARE_PAGES_PROJECT || 'sarkari-tathya-kendra' }}
+          path: web/dist
+
+  deploy:
+    if: ${{ github.event_name != 'pull_request' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

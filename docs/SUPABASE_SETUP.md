@@ -14,7 +14,7 @@
 Open **Project Settings → API** (or **Connect → App Frameworks** in the current UI).
 Copy the Project URL, anon/public key, and service-role key. The service-role key is
 only a GitHub secret. Never add it to `web/`, a `VITE_` variable, logs, screenshots,
-or Cloudflare browser variables.
+or GitHub Pages build variables.
 
 ## Create the first admin
 
