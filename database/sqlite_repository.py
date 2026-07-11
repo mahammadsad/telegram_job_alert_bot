@@ -5,4 +5,3 @@ from database.db import NoticeRepository, connect
 SQLiteRepository = NoticeRepository
 
 __all__ = ["SQLiteRepository", "NoticeRepository", "connect"]
-
