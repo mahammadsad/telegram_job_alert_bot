@@ -2,7 +2,7 @@
 
 The architecture needs no paid server, card, custom domain, image API or subscription:
 GitHub Actions runs scheduled Python; Supabase Free stores structured data/auth;
-Cloudflare Pages hosts static assets; Telegram Bot API posts; Playwright renders local
+GitHub Pages hosts static assets; Telegram Bot API posts; Playwright renders local
 temporary PNGs; PyMuPDF reads linked official PDFs; Groq is optional.
 
 Hard controls:
@@ -17,6 +17,6 @@ Hard controls:
 - No committed production database or large storage copy is required.
 
 Check monthly: Supabase **Settings → Usage**, GitHub **Settings → Billing → Actions**,
-Cloudflare **Workers & Pages → project analytics**, and the AI provider usage page.
+GitHub **Settings → Pages** and **Actions**, and the AI provider usage page.
 Reduce schedules/limits before approaching a free quota. Never rotate accounts or keys
 to bypass a provider limit; disable AI instead.

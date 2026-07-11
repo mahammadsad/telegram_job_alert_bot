@@ -1,5 +1,8 @@
 # Cloudflare Pages setup
 
+> Optional alternative only. This project now deploys through GitHub Pages by default.
+> You may skip this entire document and use `docs/GITHUB_PAGES_SETUP.md` instead.
+
 ## Before you start
 
 Merge PR #1 into the repository's `main` branch first. Cloudflare cannot deploy the
@@ -48,5 +51,6 @@ Never add `SUPABASE_SERVICE_ROLE_KEY` to Cloudflare Pages. The SPA uses Supabase
 access plus RLS. For deep links, add a Cloudflare Pages SPA fallback if your Pages
 project does not automatically serve `index.html` for routes.
 
-The alternative `.github/workflows/web.yml` deployment needs a scoped Cloudflare API
-token with Pages edit permission and the account ID. Tests and the build run before deploy.
+The repository's `.github/workflows/web.yml` deploys only to GitHub Pages. If you
+choose this optional Cloudflare route, connect the repository through Cloudflare's
+dashboard instead; no Cloudflare secrets are required by the repository workflows.
